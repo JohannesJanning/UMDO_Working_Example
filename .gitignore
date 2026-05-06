@@ -1,0 +1,18 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# OpenMDAO Outputs
+n2.html
+reports/
+*.sqlitedb
+
+# OS-specific files
+.DS_Store
+Thumbs.db
+
+# Environments
+.venv/
+env/
+venv/
