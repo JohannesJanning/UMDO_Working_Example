@@ -1,5 +1,7 @@
 # QBiT and Hexarotor Sizing Optimization - OpenMDAO
 Reproduction of conceptual sizing models from **Kaneko & Martins (2023)**.
+* Quadrotor biplane tail-sitter (QBiT) unmanned aerial vehicle (UAV)
+* Hexarotor UAV
 
 ## Reference Files
 *   MDO-FSMVRP_06052026.pptx: Contains project context and model matching data.
