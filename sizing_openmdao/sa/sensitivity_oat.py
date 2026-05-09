@@ -57,7 +57,7 @@ import qbit.constants as C
 from qbit.models.qbit_model import build_qbit_model
 from qbit.constants import (
     G, W_TOTAL_BOUNDS, V_INF_BOUNDS, R_BOUNDS,
-    J_BOUNDS, S_W_BOUNDS, DL_MAX, BL_MAX, CL_MAX,
+    J_BOUNDS, S_W_BOUNDS,
 )
 
 
@@ -66,8 +66,8 @@ from qbit.constants import (
 # ─────────────────────────────────────────────────────────────────────────────
 parser = argparse.ArgumentParser()
 parser.add_argument("--payload", type=float, default=3.0)
-parser.add_argument("--range",   type=float, default=25.0,  help="km")
-parser.add_argument("--nc",      type=int,   default=5)
+parser.add_argument("--range",   type=float, default=30.0,  help="km")
+parser.add_argument("--nc",      type=int,   default=1)
 args, _ = parser.parse_known_args()
 
 PAYLOAD_KG = args.payload
@@ -126,6 +126,12 @@ PARAMS = [
     ("K_ROTOR_B",       0.0403,   "k_rotor_B",            "model", False),
     ("K_WING_A",       -0.0802,   "k_wing_A",             "model", True),
     ("K_WING_B",        2.2854,   "k_wing_B",             "model", False),
+]
+
+PARAMS += [
+    ("DL_MAX", C.DL_MAX, "DL_MAX (disk loading)", "param", False),
+    ("BL_MAX", C.BL_MAX, "BL_MAX (blade loading)", "param", False),
+    ("CL_MAX", C.CL_MAX, "CL_MAX (cruise CL)", "param", False),
 ]
 
 PERTURB_FRACS = np.array([-0.20, -0.10, -0.05, +0.05, +0.10, +0.20])
@@ -206,9 +212,9 @@ def optimise(payload_kg: float, range_m: float, n_c: int) -> tuple[float, bool]:
 
     prob.model.add_objective("W_total")
     prob.model.add_constraint("weight_residual", equals=0.0)
-    prob.model.add_constraint("disk_loading",    upper=DL_MAX)
-    prob.model.add_constraint("blade_loading",   upper=BL_MAX)
-    prob.model.add_constraint("cruise_CL",       upper=CL_MAX)
+    prob.model.add_constraint("disk_loading",    upper=C.DL_MAX)
+    prob.model.add_constraint("blade_loading",   upper=C.BL_MAX)
+    prob.model.add_constraint("cruise_CL",       upper=C.CL_MAX)
 
     prob.model.set_input_defaults("W_total", val=6.0 * G, units="N")
     prob.setup()

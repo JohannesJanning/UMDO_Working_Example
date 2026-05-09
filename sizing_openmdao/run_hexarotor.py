@@ -43,8 +43,15 @@ class SizingResult:
     beta_deg:  float
     E_req:     float
     converged: bool
+    disk_loading: float
+    blade_loading: float
+    weight_residual: float
+    DL_MAX: float
+    BL_MAX: float
 
     def summary(self) -> str:
+        dl_margin = self.DL_MAX - self.disk_loading
+        bl_margin = self.BL_MAX - self.blade_loading
         lines = [
             f"  MTOM          : {self.W_total / G:7.3f} kg  ({self.W_total:.1f} N)",
             f"  Battery mass  : {self.W_battery / G:7.3f} kg",
@@ -57,6 +64,10 @@ class SizingResult:
             f"  P_cruise      : {self.P_cruise:8.1f} W",
             f"  E_required    : {self.E_req / 3600:.3f} Wh",
             f"  Converged     : {self.converged}",
+            "--- Constraints & Margins ---",
+            f"  Weight Resid. : {self.weight_residual:10.4e} (Goal: 0.0)",
+            f"  Disk Loading  : {self.disk_loading:7.2f} / {self.DL_MAX} N/m² (Margin: {dl_margin:7.2f})",
+            f"  Blade Loading : {self.blade_loading:7.4f} / {self.BL_MAX}      (Margin: {bl_margin:7.4f})",
         ]
         return "\n".join(lines)
 
@@ -134,6 +145,9 @@ class Stage1Problem:
         Wb   = float(prob.get_val('W_battery')[0])
         We   = float(prob.get_val('W_empty')[0])
         E    = float(prob.get_val('E_req')[0])
+        dl = float(prob.get_val('disk_loading')[0])
+        bl = float(prob.get_val('blade_loading')[0])
+        wr = float(prob.get_val('weight_residual')[0])
 
         converged = getattr(getattr(prob.driver, 'result', None), 'success', True)
 
@@ -143,6 +157,8 @@ class Stage1Problem:
             V_inf=V, r=r, mu=mu,
             beta_deg=np.degrees(beta),
             E_req=E, converged=converged,
+            disk_loading=dl, blade_loading=bl, weight_residual=wr,
+            DL_MAX=DL_MAX, BL_MAX=BL_MAX
         )
 
         if verbose:
@@ -153,7 +169,7 @@ class Stage1Problem:
 
 
 if __name__ == '__main__':
-    res = Stage1Problem(payload_kg=3.0, range_m=15_000.0, n_c=1).solve(verbose=True)
+    res = Stage1Problem(payload_kg=3.0, range_m=15_000.0, n_c=3).solve(verbose=True)
     mtom_kg = res.W_total / G
     assert 0.5 <= mtom_kg <= 50.0, f"MTOM {mtom_kg:.3f} kg outside [0.5, 50.0]"
     assert res.converged

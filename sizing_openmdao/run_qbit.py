@@ -28,8 +28,14 @@ class SizingResult:
     P_hover: float; P_cruise: float
     V_inf: float; r: float; J: float; S_w: float
     b: float; chord: float; E_req: float; converged: bool
+    disk_loading: float; blade_loading: float; cruise_CL: float; weight_residual: float
+    DL_MAX: float; BL_MAX: float; CL_MAX: float
 
     def summary(self) -> str:
+        # Calculate margins (Difference between limit and actual)
+        dl_margin = self.DL_MAX - self.disk_loading
+        bl_margin = self.BL_MAX - self.blade_loading
+        cl_margin = self.CL_MAX - self.cruise_CL
         lines = [
             f"  MTOM          : {self.W_total/G:7.3f} kg  ({self.W_total:.1f} N)",
             f"  Battery mass  : {self.W_battery/G:7.3f} kg",
@@ -44,6 +50,11 @@ class SizingResult:
             f"  P_cruise      : {self.P_cruise:8.1f} W",
             f"  E_required    : {self.E_req/3600:.3f} Wh",
             f"  Converged     : {self.converged}",
+            "--- Constraints & Margins ---",
+            f"  Weight Resid. : {self.weight_residual:10.4e} (Goal: 0.0)",
+            f"  Disk Loading  : {self.disk_loading:7.2f} / {self.DL_MAX} N/m² (Margin: {dl_margin:7.2f})",
+            f"  Blade Loading : {self.blade_loading:7.4f} / {self.BL_MAX}      (Margin: {bl_margin:7.4f})",
+            f"  Cruise CL     : {self.cruise_CL:7.4f} / {self.CL_MAX}      (Margin: {cl_margin:7.4f})",
         ]
         return "\n".join(lines)
 
@@ -109,12 +120,18 @@ class Stage1Problem:
         We = float(prob.get_val('W_empty')[0])
         E  = float(prob.get_val('E_req')[0])
         b  = float(np.sqrt(AR_FIXED * Sw))
+        dl = float(prob.get_val('disk_loading')[0])
+        bl = float(prob.get_val('blade_loading')[0])
+        cl = float(prob.get_val('cruise_CL')[0])
+        wr = float(prob.get_val('weight_residual')[0])
         converged = getattr(getattr(prob.driver, 'result', None), 'success', True)
 
         result = SizingResult(
             W_total=W, W_battery=Wb, W_empty=We,
             P_hover=Ph, P_cruise=Pc, V_inf=V, r=r, J=J, S_w=Sw,
-            b=b, chord=Sw/b, E_req=E, converged=converged)
+            b=b, chord=Sw/b, E_req=E, converged=converged, disk_loading=dl, blade_loading=bl, cruise_CL=cl, weight_residual=wr,
+            DL_MAX=DL_MAX, BL_MAX=BL_MAX, CL_MAX=CL_MAX
+        )
 
         if verbose:
             print(result.summary())
@@ -123,7 +140,7 @@ class Stage1Problem:
 
 
 if __name__ == '__main__':
-    res = Stage1Problem(payload_kg=3.0, range_m=30_000.0, n_c=3).solve(verbose=True)
+    res = Stage1Problem(payload_kg=3.0, range_m=5_000.0, n_c=1).solve(verbose=True)
     mtom_kg = res.W_total / G
     assert 0.5 <= mtom_kg <= 50.0, f"MTOM {mtom_kg:.3f} kg outside [0.5, 50.0]"
     assert res.converged
