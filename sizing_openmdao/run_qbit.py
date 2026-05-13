@@ -140,7 +140,7 @@ class Stage1Problem:
 
 
 if __name__ == '__main__':
-    res = Stage1Problem(payload_kg=3.0, range_m=5_000.0, n_c=1).solve(verbose=True)
+    res = Stage1Problem(payload_kg=3.0, range_m=15_000.0, n_c=2).solve(verbose=True)
     mtom_kg = res.W_total / G
     assert 0.5 <= mtom_kg <= 50.0, f"MTOM {mtom_kg:.3f} kg outside [0.5, 50.0]"
     assert res.converged

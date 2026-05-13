@@ -44,8 +44,8 @@ from qbit.models.qbit_model import build_qbit_model
 # CLI
 parser = argparse.ArgumentParser()
 parser.add_argument("--payload", type=float, default=3.0)
-parser.add_argument("--range",   type=float, default=25.0,  help="km")
-parser.add_argument("--nc",      type=int,   default=5)
+parser.add_argument("--range",   type=float, default=15.0,  help="km")
+parser.add_argument("--nc",      type=int,   default=2)
 # Note: the script always computes the optimized baseline design by default.
 # The previous `--use-user-fixed` mode and manual `USER_FIXEDS` block were
 # removed to avoid requiring manual fixed-design entry on each run.

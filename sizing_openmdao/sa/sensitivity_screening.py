@@ -31,11 +31,11 @@ Sobol (variance-based):
 RUN MODES
 ──────────────────────
   python sensitivity_screening.py                    # Morris only (fast)
-  python sensitivity_screening.py --method sobol     # Sobol only
-  python sensitivity_screening.py --method both      # Morris then Sobol
-  python sensitivity_screening.py --method morris --r 20   # 20 trajectories
-  python sensitivity_screening.py --method sobol  --n 128  # 128 Sobol samples
-  python sensitivity_screening.py --payload 3 --range 25 --nc 5
+  python sizing_openmdao/sa/sensitivity_screening.py --method sobol     # Sobol only
+  python sizing_openmdao/sa/sensitivity_screening.py --method both      # Morris then Sobol
+  python sizing_openmdao/sa/sensitivity_screening.py --method morris --r 20   # 20 trajectories
+  python sizing_openmdao/sa/sensitivity_screening.py --method sobol  --n 256  # 256 Sobol samples
+  python sizing_openmdao/sa/sensitivity_screening.py --payload 3 --range 25 --nc 5
 
 RUNTIME ESTIMATE (per optimiser call ≈ 0.3 s on a laptop)
   Morris  R=15, k=21 → 336 calls → ~100 s
@@ -83,6 +83,31 @@ PARAMS = [
     ("BL_MAX",          80.0,     "BL_MAX (blade load.)", "param", *bounds(80.0,     PCT, 0.0)       ),
     ("CL_MAX",          1.0,      "CL_MAX (cruise CL)",   "param", *bounds(1.0,      PCT, 0.0, 2.0) ),
 ]
+
+PARAMS = [
+    # attr              nominal    label                    type     lb          ub          justification
+    ("RHO_AIR",         1.225,    "ρ_air",                "input", 1.040,      1.410),     # ±15%: ISA 0-2000m + temp variation
+    ("T_HOVER",         60.0,     "t_hover",              "input", 30.0,       180.0),     # physical mission envelope, not %-based
+    ("BETA_QBIT",       0.18,     "β_QBiT (frame frac.)", "param", 0.144,      0.216),     # ±20%: Raymer conceptual stage structural uncertainty
+    ("ETA_HOVER",       0.65,     "η_hover",              "param", 0.550,      0.750),     # literature range small UAV rotors (Leishman 2006)
+    ("CD0_WING",        0.01,     "CD0_wing",             "param", 0.008,      0.012),     # ±20%: conceptual-stage CFD/panel scatter
+    ("E_OSWALD",        0.80,     "e_Oswald",             "param", 0.680,      0.920),     # ±15%: panel method uncertainty
+    ("AR_FIXED",        8.0,      "AR",                   "input", 6.4,        9.6),       # ±20%: design space exploration
+    ("SIGMA",           0.13,     "σ (solidity)",         "param", 0.104,      0.156),     # ±20%: manufacturing tolerance + design choice
+    ("CD0_ROTOR",       0.012,    "CD0_rotor",            "param", 0.009,      0.015),     # ±20%: CFD/BEM scatter at conceptual stage
+    ("KAPPA_MAX",       1.15,     "κ_max",                "param", 1.035,      1.265),     # ±10%: well-characterised inflow correction
+    ("BATTERY_DENSITY", 158.0,    "ρ_bat (Wh/kg)",        "input", 126.0,      200.0),     # LiPo technology range 2024 (manufacturer data)
+    ("BATTERY_EFF",     0.85,     "η_bat",                "param", 0.720,      0.980),     # ±15%, capped below 1.0: C-rate + temp effects
+    ("K_MOTOR",         2.506e-4, "k_motor",              "model", 2.130e-4,   2.882e-4),  # ±15%: regression 95% prediction interval
+    ("K_ESC",           3.594e-4, "k_ESC",                "model", 3.055e-4,   4.133e-4),  # ±15%: regression 95% prediction interval
+    ("K_ROTOR_A",       0.7484,   "k_rotor_A",            "model", 0.636,      0.861),     # ±15%: regression 95% prediction interval
+    ("K_ROTOR_B",       0.0403,   "k_rotor_B",            "model", 0.034,      0.046),     # ±15%: regression 95% prediction interval
+    ("K_WING_A",       -0.0802,   "k_wing_A",             "model", -0.092,    -0.068),     # ±15%: regression 95% prediction interval
+    ("K_WING_B",        2.2854,   "k_wing_B",             "model", 1.943,      2.628),     # ±15%: regression 95% prediction interval
+    ("DL_MAX",          55.0,     "DL_MAX (disk load.)",  "param", 44.0,       66.0),      # ±20%: noise regs + structural assumption uncertainty
+    ("BL_MAX",          80.0,     "BL_MAX (blade load.)", "param", 64.0,       96.0),      # ±20%: blade stall characterisation uncertainty
+    ("CL_MAX",          1.0,      "CL_MAX (cruise CL)",   "param", 0.800,      1.200),     # ±20%: airfoil + flap assumption uncertainty
+]
 """
 
 from __future__ import annotations
@@ -127,8 +152,8 @@ TYPE_COLORS = {
 # ── CLI ───────────────────────────────────────────────────────────────────────
 parser = argparse.ArgumentParser()
 parser.add_argument("--payload", type=float, default=3.0)
-parser.add_argument("--range",   type=float, default=25.0, help="km one-way")
-parser.add_argument("--nc",      type=int,   default=5)
+parser.add_argument("--range",   type=float, default=15.0, help="km one-way")
+parser.add_argument("--nc",      type=int,   default=2)
 parser.add_argument("--method",  type=str,   default="morris",
                     choices=["morris", "sobol", "both"],
                     help="Screening method (default: morris)")
@@ -168,6 +193,7 @@ os.makedirs(RESULTS_DIR, exist_ok=True)
 #           "param"  → aerodynamic / physical parameter
 #           "model"  → regression / empirical model coefficient
 # ─────────────────────────────────────────────────────────────────────────────
+
 PARAMS = [
     # attr              nominal    label                    type     lb          ub          justification
     ("RHO_AIR",         1.225,    "ρ_air",                "input", 1.040,      1.410),     # ±15%: ISA 0-2000m + temp variation
@@ -427,18 +453,14 @@ def _check_salib() -> bool:
 
 
 def run_sobol(W_base: float) -> list[dict]:
-    """
-    Run Sobol variance-based sensitivity analysis using SALib.
-
-    Uses Saltelli sampling scheme: N*(2k+2) model evaluations.
-
-    Returns list of dicts with keys:
-        attr, label, type, nominal, S1, S1_conf, ST, ST_conf
-    """
     if not _check_salib():
         return []
 
-    from SALib.sample import saltelli
+    try:
+        from SALib.sample import sobol as sobol_sample
+    except ImportError:
+        from SALib.sample import saltelli as sobol_sample
+
     from SALib.analyze import sobol as sobol_analyze
 
     n_total = N_SOBOL * (2 * k + 2)
@@ -447,22 +469,25 @@ def run_sobol(W_base: float) -> list[dict]:
     print(f"   Total optimiser calls: {n_total}")
     print(f"   Estimated runtime: {n_total * 0.3 / 60:.0f}–{n_total * 0.5 / 60:.0f} min\n")
 
-    problem = {
+    # Use unit hypercube for SALib — avoids ALL bound-sign issues.
+    # We do our own affine scaling to physical space: x_phys = lb + u*(ub-lb)
+    # Sobol indices are invariant to this transform.
+    problem_unit = {
         "num_vars": k,
         "names":    [p[0] for p in PARAMS],
-        "bounds":   [[p[4], p[5]] for p in PARAMS],
+        "bounds":   [[0.0, 1.0]] * k,          # always legal, no sign issues
     }
 
-    rng = np.random.default_rng(SEED)
-    # SALib saltelli sampler uses its own seed
     try:
-        param_values = saltelli.sample(problem, N_SOBOL,
-                                       calc_second_order=False,
-                                       seed=SEED)
+        param_values_unit = sobol_sample.sample(
+            problem_unit, N_SOBOL, calc_second_order=False, seed=SEED)
     except TypeError:
         np.random.seed(SEED)
-        param_values = saltelli.sample(problem, N_SOBOL,
-                                       calc_second_order=False)
+        param_values_unit = sobol_sample.sample(
+            problem_unit, N_SOBOL, calc_second_order=False)
+
+    # Scale from [0,1] to physical [lb, ub]  — handles negative bounds fine
+    param_values = LB + param_values_unit * (UB - LB)   # (n_samples, k)
 
     n_total_actual = len(param_values)
     Y = np.full(n_total_actual, np.nan)
@@ -481,14 +506,13 @@ def run_sobol(W_base: float) -> list[dict]:
     print(f"\n  Sobol evaluations done: {n_total_actual}, failures: {n_fail} "
           f"({n_fail/n_total_actual*100:.1f}%)")
 
-    # Replace NaN with mean (simple imputation — note in output)
     if n_fail > 0:
         mean_Y = np.nanmean(Y)
         Y = np.where(np.isnan(Y), mean_Y, Y)
-        print(f"  [WARN] {n_fail} NaN results replaced with mean Y={mean_Y/G:.3f} kg — "
-              f"check model stability at boundary conditions")
+        print(f"  [WARN] {n_fail} NaN results replaced with mean Y={mean_Y/G:.3f} kg")
 
-    Si = sobol_analyze.analyze(problem, Y,
+    # Analyze against unit problem — indices are scale-invariant
+    Si = sobol_analyze.analyze(problem_unit, Y,
                                calc_second_order=False,
                                print_to_console=False,
                                seed=SEED)

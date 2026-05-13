@@ -8,7 +8,7 @@ import numpy as np
 RHO_AIR = 1.225          # kg/m³  – sea-level air density
 
 # Mission
-T_HOVER = 60.0           # s      – hover time per takeoff/landing event
+T_HOVER = 55.0           # s      – hover time per takeoff/landing event
 
 # QBiT airframe
 BETA_QBIT  = 0.18        # –      – frame weight fraction

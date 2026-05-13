@@ -66,8 +66,8 @@ from qbit.constants import (
 # ─────────────────────────────────────────────────────────────────────────────
 parser = argparse.ArgumentParser()
 parser.add_argument("--payload", type=float, default=3.0)
-parser.add_argument("--range",   type=float, default=30.0,  help="km")
-parser.add_argument("--nc",      type=int,   default=1)
+parser.add_argument("--range",   type=float, default=15.0,  help="km")
+parser.add_argument("--nc",      type=int,   default=2)
 args, _ = parser.parse_known_args()
 
 PAYLOAD_KG = args.payload

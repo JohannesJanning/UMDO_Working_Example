@@ -87,8 +87,8 @@ from qbit.constants import (
 # ── CLI ─────────────────────────────────────────────────────────────────────
 parser = argparse.ArgumentParser()
 parser.add_argument("--payload",     type=float, default=3.0)
-parser.add_argument("--range",       type=float, default=25.0, help="km one-way")
-parser.add_argument("--nc",          type=int,   default=5)
+parser.add_argument("--range",       type=float, default=15.0, help="km one-way")
+parser.add_argument("--nc",          type=int,   default=2)
 parser.add_argument("--list-inputs", action="store_true",
                     help="Print all promoted model inputs and exit")
 parser.add_argument("--fd-step",     type=float, default=0.01,
