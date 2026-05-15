@@ -37,7 +37,7 @@ def main():
 
     # Deterministic design point provided by user (from run_qbit.py result)
     # Order expected by inner_solve_for_Wtotal: [V_inf, r, J, S_w]
-    x_det = [29.80,   0.2603, 1.300, 0.2340]
+    x_det = [29.25, 0.2717, 1.300, 0.2457]
     det_W_input = 70.1  # N, for optional deterministic marker on MTOM histogram
     det_cl_input = 0.5505  # for optional deterministic marker on cruise CL plot
     # Mission configuration (match deterministic run)

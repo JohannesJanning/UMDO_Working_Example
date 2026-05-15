@@ -1,0 +1,13 @@
+Settings:
+  aleat_samp_size: 2000
+  backend: Agg
+  order: 3
+  track_convergence_off: true
+Variable 0:
+  distribution: lognormal
+  interval_low: 25.0
+  interval_high: 101
+  mu: 3.28424
+  name: t_hover
+  stdev: 0.55403
+  type: aleatory

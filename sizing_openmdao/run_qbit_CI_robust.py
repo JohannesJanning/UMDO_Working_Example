@@ -386,11 +386,9 @@ class RobustOptimizer:
         stdW = float(np.std(W_arr, ddof=0))
         
         # 2. Analytic 95th Percentile (Smooth for SLSQP)
-        # This is the value the optimizer will actually see
         p95_W = meanW + 1.645 * stdW
 
         # 3. Aggregate other fields
-        # Instead of just means, let's capture the standard deviation of constraints
         keys = ['W_battery','W_empty','P_hover','P_cruise','V_inf','r','J','S_w','E_req','disk_loading','blade_loading','cruise_CL','weight_residual']
         mean_res = {}
         for k in keys:
