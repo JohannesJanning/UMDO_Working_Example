@@ -67,42 +67,22 @@ def setup_and_init_uqpce() -> dict:
     integrate the order-3 polynomial exactly.  Validate against MC once.
     """
     # UQPCE distribution choice for t_hover:
-    #
-    # Problem: LognormalVariable has no interval_high support, so untruncated
-    # Gauss-Laguerre quadrature places points at ~174s where the model is
-    # infeasible (no Brent root). One failed quadrature point among 8 inflates
-    # PCE variance by ~1000x. ContinuousVariable with the lognormal PDF causes
-    # SymPy's Risch integrator to fail (PolynomialDivisionFailed) when computing
-    # the CDF symbolically, leading to a wrong CI despite a correct variance.
-    #
-    # Solution: BetaVariable on [25, 110]s, fitted to match the truncated
-    # lognormal's mean and variance via method of moments:
-    #   Truncated lognormal [25,110]: mean=54.73s, std=15.45s (98.17% mass)
-    #   Beta(alpha=2.0576, beta=3.8263) on [25,110]: mean=54.73s, std=15.45s
-    #   95th percentile difference: ~66g in W_total — within model uncertainty.
-    #
-    # BetaVariable uses the regularised incomplete beta CDF which SymPy handles
-    # analytically, so the CI computation is exact. Gauss-Jacobi quadrature
-    # places all points within [25, 110] by construction.
-    #
-    # Document as: "t_hover modelled as Beta(2.06, 3.83) on [25,110]s, fitted
-    # to the truncated lognormal (mean=54.7s, std=15.4s) via method of moments.
-    # The 95th-percentile difference vs the true truncated lognormal is <0.1 kg."
+  
     config = {
         "Variable 0": {
             "name": "t_hover",
             "distribution": "beta",
-            "alpha": 2.0576,
-            "beta":  3.8263,
-            "interval_low":  25.0,
-            "interval_high": 130.0,
+            "alpha": 1.1772, #2.0576,
+            "beta":  7.6088, #3.8263,
+            "interval_low":  32.0,
+            "interval_high": 200.0,
             "type": "aleatory",
         },
         "Settings": {
-            "order": 2,
+            "order": 6,
             "backend": "Agg",
             "track_convergence_off": True,
-            "aleat_samp_size": 2000,
+            "aleat_samp_size": 100000,
         },
     }
 
@@ -126,9 +106,9 @@ def setup_and_init_uqpce() -> dict:
     t_pts = d["run_matrix"][:, 0]
     t_max = float(t_pts.max())
     print(f"  Quadrature t_hover points [s]: {t_pts.round(1)}")
-    if t_max > 115.0:
+    if t_max > 200.0:
         raise RuntimeError(
-            f"UQPCE placed a quadrature point at t={t_max:.1f}s > 115s even with "
+            f"UQPCE placed a quadrature point at t={t_max:.1f}s > 200s even with "
             f"uniform distribution. Something is wrong with the UQPCE config."
         )
 
@@ -510,9 +490,9 @@ def run():
 
     # Add this to your validation block in run()
     print("\nSurrogate validation vs MC reference:")
-    from run_qbit_robust import RobustOptimizer, sample_t_hover
-    uq_ref = RobustOptimizer(payload_kg=3.0, range_m=15000.0, n_c=2, n_mc=500, seed=42)
-    uq_ref.mc_samples = sample_t_hover(500, uq_ref.mean_t, uq_ref.std_t,
+    from run_qbit_MCS import RobustOptimizer, sample_t_hover
+    uq_ref = RobustOptimizer(payload_kg=3.0, range_m=15000.0, n_c=2, n_mc=10000, seed=42)
+    uq_ref.mc_samples = sample_t_hover(2000, uq_ref.mean_t, uq_ref.std_t,
                                         uq_ref.shift_t, seed=42)
     x0 = [prob.get_val("V_inf")[0], prob.get_val("r")[0],
         prob.get_val("J")[0],    prob.get_val("S_w")[0]]

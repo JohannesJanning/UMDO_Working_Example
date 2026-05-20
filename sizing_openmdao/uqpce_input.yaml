@@ -1,13 +1,11 @@
 Settings:
-  aleat_samp_size: 2000
+  aleat_samp_size: 100000
   backend: Agg
-  order: 2
+  order: 6
   track_convergence_off: true
 Variable 0:
-  alpha: 2.0576
-  beta: 3.8263
-  distribution: beta
-  interval_high: 130.0
-  interval_low: 25.0
-  name: t_hover
+  distribution: normal
+  mean: 0.0
+  name: z_hover
+  stdev: 1.0
   type: aleatory

@@ -1,7 +1,7 @@
 """UQ evaluation script for a deterministic design point.
 
 This uses the existing `RobustOptimizer` and `inner_solve_for_Wtotal`
-from `run_qbit_robust.py` to perform a high-fidelity Monte-Carlo / LHS
+from `run_qbit_MCS.py` to perform a high-fidelity Monte-Carlo / LHS
 propagation on a fixed design `x_det` without running a new optimization.
 
 Default: `n_mc=2000` (can be overridden via `--n-mc`). For quick tests use
@@ -19,7 +19,7 @@ ROOT = os.path.dirname(HERE)
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-from run_qbit_robust import RobustOptimizer, SizingResult, inner_solve_for_Wtotal, sample_t_hover
+from run_qbit_MCS import RobustOptimizer, SizingResult, inner_solve_for_Wtotal, sample_t_hover
 import matplotlib.pyplot as plt
 import math
 from pathlib import Path
@@ -33,11 +33,11 @@ def main():
     p.add_argument('--quick', action='store_true', help='Quick test: override n_mc to 200')
     args = p.parse_args()
 
-    n_mc = 200 if args.quick else args.n_mc
+    n_mc = 1000 if args.quick else args.n_mc
 
-    # Deterministic design point provided by user (from run_qbit.py result)
+    # Deterministic design point (from run_qbit.py result)
     # Order expected by inner_solve_for_Wtotal: [V_inf, r, J, S_w]
-    x_det = [29.25, 0.2717, 1.300, 0.2457]
+    x_det = [29.60, 0.2646, 1.300, 0.2386]
     det_W_input = 70.1  # N, for optional deterministic marker on MTOM histogram
     det_cl_input = 0.5505  # for optional deterministic marker on cruise CL plot
     # Mission configuration (match deterministic run)
@@ -103,6 +103,29 @@ def main():
     stdW = float(np.std(Wtot, ddof=0))
     p_lo, p_hi = np.percentile(Wtot / 9.80665, [2.5, 97.5])  # convert to kg for PI
 
+    # Extract constraint arrays for violation analysis
+    cruise_CL_arr = np.array([p['cruise_CL'] for p in valid_results])
+    disk_loading_arr = np.array([p['disk_loading'] for p in valid_results])
+    blade_loading_arr = np.array([p['blade_loading'] for p in valid_results])
+
+    # Get limits from constants
+    try:
+        from qbit.constants import DL_MAX, BL_MAX, CL_MAX
+    except Exception:
+        DL_MAX = float('nan')
+        BL_MAX = float('nan')
+        CL_MAX = float('nan')
+
+    # Calculate violation percentages
+    cruise_CL_violations = np.sum(cruise_CL_arr > CL_MAX) if not math.isnan(CL_MAX) else 0
+    cruise_CL_violation_pct = 100.0 * cruise_CL_violations / len(cruise_CL_arr) if not math.isnan(CL_MAX) else float('nan')
+    
+    disk_loading_violations = np.sum(disk_loading_arr > DL_MAX) if not math.isnan(DL_MAX) else 0
+    disk_loading_violation_pct = 100.0 * disk_loading_violations / len(disk_loading_arr) if not math.isnan(DL_MAX) else float('nan')
+    
+    blade_loading_violations = np.sum(blade_loading_arr > BL_MAX) if not math.isnan(BL_MAX) else 0
+    blade_loading_violation_pct = 100.0 * blade_loading_violations / len(blade_loading_arr) if not math.isnan(BL_MAX) else float('nan')
+
     # Build SizingResult summary using mean values
     keys = ['W_battery','W_empty','P_hover','P_cruise','V_inf','r','J','S_w','E_req','disk_loading','blade_loading','cruise_CL','weight_residual']
     mean_res = {}
@@ -124,7 +147,8 @@ def main():
         P_hover=mean_res['P_hover'], P_cruise=mean_res['P_cruise'],
         V_inf=mean_res['V_inf'], r=mean_res['r'], J=mean_res['J'], S_w=mean_res['S_w'],
         b=b, chord=chord, E_req=mean_res['E_req'], converged=True,
-        disk_loading=mean_res['disk_loading'], blade_loading=mean_res['blade_loading'], cruise_CL=mean_res['cruise_CL'], weight_residual=mean_res['weight_residual']
+        disk_loading=mean_res['disk_loading'], blade_loading=mean_res['blade_loading'], 
+        cruise_CL=mean_res['cruise_CL'], weight_residual=mean_res['weight_residual']
     )
 
     print('\n--- UQ Evaluation Results ---')
@@ -134,10 +158,11 @@ def main():
     print(f'MTOM std  (N)    : {stdW:.2f} N')
     print(f'MTOM mean (kg)   : {meanW/9.80665:.3f} kg')
     print(f'95% PI (kg)      : [{p_lo:.3f}, {p_hi:.3f}]')
+    
     print('\nMean sizing summary:')
     print(mean_result.summary())
 
-    # Compare against a nominal value if user wants (example 68.5 N nominal from prompt)
+    # Compare against a nominal value (example 68.5 N nominal from prompt)
     nominal_N = 68.5
     growth_pct = 100.0 * (meanW - nominal_N) / nominal_N
     print(f'\nWeight growth vs nominal {nominal_N:.1f} N : {growth_pct:.2f} %')
@@ -155,14 +180,12 @@ def main():
         det_cl = float(det_res['cruise_CL'])
 
     # MTOM histogram (in kg) with mean, 95% PI and deterministic marker
-    # --- MTOM histogram (in kg) ---
     W_kg = Wtot / 9.80665
     
     # Set your desired fixed scale for MTOM (kg) here
     mtom_min, mtom_max = 6, 9 
 
     fig1, ax1 = plt.subplots(figsize=(6,4))
-    # Using the requested blue color
     ax1.hist(W_kg, bins=40, color='#4c72b0', edgecolor='k', alpha=0.8, label='Samples')
     
     ax1.axvline(np.mean(W_kg), color='red', linestyle='--', label=f'Mean {np.mean(W_kg):.3f} kg')
@@ -172,9 +195,7 @@ def main():
     if det_W_input is not None:
         ax1.axvline(det_W_input/9.80665, color='purple', linestyle='-.', label=f'Deterministic {det_W_input/9.80665:.3f} kg')
 
-    # --- FIX X-AXIS SCALE HERE ---
     ax1.set_xlim(mtom_min, mtom_max)
-
     ax1.set_xlabel('MTOM (kg)')
     ax1.set_ylabel('Count')
     ax1.set_title('MTOM distribution (UQ)')
@@ -184,50 +205,46 @@ def main():
     fig1.tight_layout()
     fig1.savefig(p1, dpi=150)
     plt.close(fig1)
-    print(f'Saved MTOM histogram to {p1}')
+    print(f'\nSaved MTOM histogram to {p1}')
 
     # --- Cruise CL PDF / density and violation percent ---
     cl_arr = np.array([p['cruise_CL'] for p in valid_results])
     
     # Define fixed limits
-    x_min, x_max = 0.5, 0.8
+    x_min_cl, x_max_cl = 0.5, 0.8
 
     try:
         from scipy.stats import gaussian_kde
-        kde = gaussian_kde(cl_arr)
-        # Generate points across the fixed scale for a smooth KDE line
-        xs = np.linspace(x_min, x_max, 300)
-        ys = kde(xs)
+        kde_cl = gaussian_kde(cl_arr)
+        xs_cl = np.linspace(x_min_cl, x_max_cl, 300)
+        ys_cl = kde_cl(xs_cl)
         use_kde = True
     except Exception:
-        xs = None
-        ys = None
+        xs_cl = None
+        ys_cl = None
         use_kde = False
 
     fig2, ax2 = plt.subplots(figsize=(6,4))
     ax2.hist(cl_arr, bins=60, density=True, color='#55a868', alpha=0.6, edgecolor='k', label='Samples')
     
     if use_kde:
-        ax2.plot(xs, ys, color='k', lw=1.2, label='KDE')
+        ax2.plot(xs_cl, ys_cl, color='k', lw=1.2, label='KDE')
 
-    # Mark CL limit
-    try:
-        from qbit.constants import CL_MAX
-    except Exception:
-        CL_MAX = float('nan')
     if not math.isnan(CL_MAX):
         ax2.axvline(CL_MAX, color='red', linestyle='--', lw=2, label=f'Limit CL={CL_MAX:.2f}')
+        # Fill violation region
+        x_viol = np.linspace(CL_MAX, x_max_cl, 100)
+        if use_kde:
+            y_viol = kde_cl(x_viol)
+            ax2.fill_between(x_viol, 0, y_viol, color='red', alpha=0.2, label=f'Violation: {cruise_CL_violation_pct:.2f}%')
 
-    # Deterministic cruise CL marker
     if det_cl_input is not None:
         ax2.axvline(det_cl_input, color='purple', linestyle='-.', label=f'Deterministic CL={det_cl_input:.3f}')
 
-    # --- FIX X-AXIS SCALE HERE ---
-    ax2.set_xlim(x_min, x_max) 
-    
+    ax2.set_xlim(x_min_cl, x_max_cl)
     ax2.set_xlabel('Cruise CL')
     ax2.set_ylabel('Density')
-    ax2.set_title('Cruise CL distribution (UQ)')
+    ax2.set_title(f'Cruise CL distribution (UQ) - Violations: {cruise_CL_violation_pct:.2f}%')
     ax2.legend()
     
     p2 = out_dir / 'uq_cruiseCL_pdf.png'
@@ -236,13 +253,94 @@ def main():
     plt.close(fig2)
     print(f'Saved Cruise CL pdf to {p2}')
 
-    # Violation percent
-    if not math.isnan(CL_MAX):
-        viol = np.sum(cl_arr > CL_MAX)
-        viol_pct = 100.0 * viol / len(cl_arr)
-        print(f'Cruise CL violations : {viol} / {len(cl_arr)} ({viol_pct:.3f} % )')
-    else:
-        print('CL_MAX not available from qbit.constants; cannot compute violation percent')
+    # --- Disk Loading Plot ---
+    dl_arr = np.array([p['disk_loading'] for p in valid_results])
+    x_min_dl, x_max_dl = 50, 150
+
+    try:
+        kde_dl = gaussian_kde(dl_arr)
+        xs_dl = np.linspace(x_min_dl, x_max_dl, 300)
+        ys_dl = kde_dl(xs_dl)
+        use_kde_dl = True
+    except Exception:
+        xs_dl = None
+        ys_dl = None
+        use_kde_dl = False
+
+    fig3, ax3 = plt.subplots(figsize=(6,4))
+    ax3.hist(dl_arr, bins=60, density=True, color='#dd8452', alpha=0.6, edgecolor='k', label='Samples')
+    
+    if use_kde_dl:
+        ax3.plot(xs_dl, ys_dl, color='k', lw=1.2, label='KDE')
+
+    if not math.isnan(DL_MAX):
+        ax3.axvline(DL_MAX, color='red', linestyle='--', lw=2, label=f'Limit DL={DL_MAX:.0f} N/m²')
+        x_viol_dl = np.linspace(DL_MAX, x_max_dl, 100)
+        if use_kde_dl:
+            y_viol_dl = kde_dl(x_viol_dl)
+            ax3.fill_between(x_viol_dl, 0, y_viol_dl, color='red', alpha=0.2, label=f'Violation: {disk_loading_violation_pct:.2f}%')
+
+    ax3.set_xlim(x_min_dl, x_max_dl)
+    ax3.set_xlabel('Disk Loading (N/m²)')
+    ax3.set_ylabel('Density')
+    ax3.set_title(f'Disk Loading distribution (UQ) - Violations: {disk_loading_violation_pct:.2f}%')
+    ax3.legend()
+
+    p3 = out_dir / 'uq_diskloading_pdf.png'
+    fig3.tight_layout()
+    fig3.savefig(p3, dpi=150)
+    plt.close(fig3)
+    print(f'Saved Disk Loading pdf to {p3}')
+
+    # --- Blade Loading Plot ---
+    bl_arr = np.array([p['blade_loading'] for p in valid_results])
+    x_min_bl, x_max_bl = 0.012, 0.018
+
+    try:
+        kde_bl = gaussian_kde(bl_arr)
+        xs_bl = np.linspace(x_min_bl, x_max_bl, 300)
+        ys_bl = kde_bl(xs_bl)
+        use_kde_bl = True
+    except Exception:
+        xs_bl = None
+        ys_bl = None
+        use_kde_bl = False
+
+    fig4, ax4 = plt.subplots(figsize=(6,4))
+    ax4.hist(bl_arr, bins=60, density=True, color='#4c72b0', alpha=0.6, edgecolor='k', label='Samples')
+    
+    if use_kde_bl:
+        ax4.plot(xs_bl, ys_bl, color='k', lw=1.2, label='KDE')
+
+    if not math.isnan(BL_MAX):
+        ax4.axvline(BL_MAX, color='red', linestyle='--', lw=2, label=f'Limit BL={BL_MAX:.3f}')
+        x_viol_bl = np.linspace(BL_MAX, x_max_bl, 100)
+        if use_kde_bl:
+            y_viol_bl = kde_bl(x_viol_bl)
+            ax4.fill_between(x_viol_bl, 0, y_viol_bl, color='red', alpha=0.2, label=f'Violation: {blade_loading_violation_pct:.2f}%')
+
+    ax4.set_xlim(x_min_bl, x_max_bl)
+    ax4.set_xlabel('Blade Loading')
+    ax4.set_ylabel('Density')
+    ax4.set_title(f'Blade Loading distribution (UQ) - Violations: {blade_loading_violation_pct:.2f}%')
+    ax4.legend()
+
+    p4 = out_dir / 'uq_bladeloading_pdf.png'
+    fig4.tight_layout()
+    fig4.savefig(p4, dpi=150)
+    plt.close(fig4)
+    print(f'Saved Blade Loading pdf to {p4}')
+
+    # --- Summary Table Print ---
+    print('\n' + '='*60)
+    print('CONSTRAINT VIOLATION SUMMARY')
+    print('='*60)
+    print(f"{'Constraint':<20} {'Limit':<15} {'Violations':<15} {'Violation %':<12}")
+    print('-'*60)
+    print(f"{'Cruise CL':<20} {CL_MAX:<15.3f} {cruise_CL_violations:<15} {cruise_CL_violation_pct:<12.3f}%")
+    print(f"{'Disk Loading':<20} {DL_MAX:<15.1f} {disk_loading_violations:<15} {disk_loading_violation_pct:<12.3f}%")
+    print(f"{'Blade Loading':<20} {BL_MAX:<15.4f} {blade_loading_violations:<15} {blade_loading_violation_pct:<12.3f}%")
+    print('='*60)
 
     return 0
 

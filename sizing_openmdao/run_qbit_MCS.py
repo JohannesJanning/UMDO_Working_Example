@@ -166,7 +166,7 @@ def inner_solve_for_Wtotal(t_hover_sample: float, payload_kg: float, range_m: fl
             else:
                 sc.T_HOVER = orig_T
 
-    # Try to bracket root within W_TOTAL_BOUNDS
+    
     wl, wh = float(W_TOTAL_BOUNDS[0]), float(W_TOTAL_BOUNDS[1])
     try:
         rl = eval_res(wl)
@@ -178,7 +178,6 @@ def inner_solve_for_Wtotal(t_hover_sample: float, payload_kg: float, range_m: fl
         if rh == 0.0:
             return wh
         if rl * rh > 0:
-            # no sign change; attempt scanning for bracket
             Ns = 9
             xs = np.linspace(wl, wh, Ns)
             vals = [eval_res(x) for x in xs]
@@ -265,7 +264,6 @@ class RobustOptimizer:
     mc_samples: np.ndarray | None = None
     sampling_method: str = "lhs"
     cl_margin: float = 0.0001  # small margin to ensure we don't optimize right up to the CL_MAX constraint
-    # diagnostics (filled in `run`)
     _obj_calls: int = 0
     eval_times: list | None = None
     inner_calls: int = 0
@@ -274,8 +272,8 @@ class RobustOptimizer:
     maxiter: int = 200
 
     def objective(self, x: Sequence[float]) -> float:
-        """Outer objective to minimize: U = mean(W) + 1.645 * std(W)
-        This corresponds to minimizing the 95th percentile (Value at Risk).
+        """Outer objective to minimize: U = mean(W) + 1.96 * std(W)
+        This corresponds to minimizing the 97.5th percentile (upper bound of 95% CI).
         """
         V_inf, r, J, S_w = x
         t0 = time.time()
@@ -311,17 +309,16 @@ class RobustOptimizer:
         meanW = stats['meanW']
         stdW = stats['stdW']
 
-        # Prefer sample-based p95 if available (more accurate than normal approx)
-        p95_W = stats.get('p95W', None)
-        if p95_W is None:
-            p95_W = meanW + 1.645 * stdW
+        # Use 1.96 for 97.5th percentile (upper bound of 95% CI)
+        # This matches the 97.5th percentile used in post-processing
+        p97_5_W = meanW + 1.96 * stdW
 
-        # Objective: minimize the estimated 95th-percentile W (in N)
-        U = float(p95_W)
+        # Objective: minimize the estimated 97.5th-percentile W (in N)
+        U = float(p97_5_W)
 
         line = (f"{bar} [{self._obj_calls}/{self.maxiter}] ETA {eta_str} "
             f"→ V={V_inf:.2f}, r={r:.3f}, S_w={S_w:.3f} "
-            f"mean={meanW/G:.2f}kg, p95={p95_W/G:.2f}kg")
+            f"mean={meanW/G:.2f}kg, p97.5={p97_5_W/G:.2f}kg")
         print('\r' + line, end="", flush=True)
         
         self._last_results = stats['results']
@@ -385,10 +382,13 @@ class RobustOptimizer:
         meanW = float(np.mean(W_arr))
         stdW = float(np.std(W_arr, ddof=0))
         
-        # 2. Analytic 95th Percentile (Smooth for SLSQP)
-        p95_W = meanW + 1.645 * stdW
+        # 2. 97.5th Percentile (matches objective)
+        p97_5_W = meanW + 1.96 * stdW
 
-        # 3. Aggregate other fields
+        # 3. Also compute sample-based 97.5th percentile for validation
+        p97_5_sample = float(np.percentile(W_arr, 97.5))
+
+        # 4. Aggregate other fields
         keys = ['W_battery','W_empty','P_hover','P_cruise','V_inf','r','J','S_w','E_req','disk_loading','blade_loading','cruise_CL','weight_residual']
         mean_res = {}
         for k in keys:
@@ -403,10 +403,11 @@ class RobustOptimizer:
         return {
             'meanW': meanW, 
             'stdW': stdW, 
-            'p95W': p95_W,     # New key for the optimizer
+            'p97_5W': p97_5_W,     
+            'p97_5_sample': p97_5_sample,
             'mean_res': mean_res, 
             'results': results,
-            'W_samples': W_arr  # Useful for post-process histograms
+            'W_samples': W_arr  
         }
 
     def run(self, x0: Sequence[float] | None = None, method: str = 'SLSQP'):
@@ -430,8 +431,8 @@ class RobustOptimizer:
                 return -1e6
             mean_cl = float(stats['mean_res']['cruise_CL'])
             std_cl = float(np.std(cl_samples, ddof=0))
-            # use multiplier 2.326 (approx 99% one-sided) as in reliable optimizer
-            return float(CL_MAX - (mean_cl + 2.326 * std_cl) - self.cl_margin)
+            # use multiplier 2.576 (approx 99% one-sided) as in reliable optimizer
+            return float(CL_MAX - (mean_cl + 2.50 * std_cl) - self.cl_margin)
 
         def constr_disk_loading(x):
             stats = self._mc_stats(x)
@@ -487,8 +488,7 @@ class RobustOptimizer:
 
 
 if __name__ == '__main__':
-    # Quick test run with reduced Monte Carlo for speed
-    opt = RobustOptimizer(payload_kg=3.0, range_m=15_000.0, n_c=5, n_mc=100, seed=123)
+    opt = RobustOptimizer(payload_kg=3.0, range_m=15_000.0, n_c=2, n_mc=1000, seed=123)
     x0 = [33.0, 0.22, 1.3, 0.2]
     res = opt.run(x0=x0, method='SLSQP')
     print('\nOptimization finished:')
