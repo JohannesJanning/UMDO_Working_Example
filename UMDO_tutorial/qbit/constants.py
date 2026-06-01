@@ -8,11 +8,11 @@ import numpy as np
 RHO_AIR = 1.225          # kg/m³  – sea-level air density
 
 # Mission
-T_HOVER = 55           # s      – hover time per takeoff/landing event
+T_HOVER = 55.0           # s      – hover time per takeoff/landing event
 
 # QBiT airframe
 BETA_QBIT  = 0.18        # –      – frame weight fraction
-ETA_HOVER  = 0.65  # 0.5661       # –      – hover figure of merit
+ETA_HOVER  = 0.65        # –      – hover figure of merit
 CD0_WING   = 0.01        # –      – zero-lift wing drag coefficient
 E_OSWALD   = 0.8         # –      – Oswald efficiency factor
 AR_FIXED   = 8.0         # –      – fixed wing aspect ratio

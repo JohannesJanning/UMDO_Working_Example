@@ -1,12 +1,7 @@
-"""UQ evaluation with fixed `W_total` and fixed design `x_det`.
+"""UQ evaluation with fixed `W_total` and fixed design `x_det` over a specific hover range.
 
-This script keeps `W_total` fixed (optionally provided) and evaluates the
-required mission energy `E_req` across hover-time uncertainty samples. It
-reports the percent of samples for which `E_req_sample > E_req_det` (simple
-comparison) and the percent for which `E_req_sample` exceeds the available
-energy implied by the fixed battery weight (more realistic infeasibility).
-
-Usage: python uq_fixed_Wtotal.py [--n-mc N] [--W-total N] [--quick]
+This script sweeps hover times from 55s to 101s and prints the resulting mission energy
+in Watt-hours (Wh) and power consumption (in Watts) directly to the terminal.
 """
 from __future__ import annotations
 import sys
@@ -22,17 +17,14 @@ ROOT = os.path.dirname(HERE)
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-from run_qbit_robust import RobustOptimizer, inner_solve_for_Wtotal, sample_t_hover, SizingResult
+from run_qbit_MCS import RobustOptimizer, inner_solve_for_Wtotal, SizingResult
 from qbit.constants import G, BATTERY_DENSITY, BATTERY_EFF
 from pathlib import Path
 
 
 def eval_with_fixed_W_from_cached_prob(prob, t_hover_sample: float, W_fixed: float,
                                        V_inf: float, r: float, J: float, S_w: float):
-    """Run the already-setup `prob` with a fixed `W_total` and hover time.
-    Returns a dict of outputs similar to `inner_solve_for_Wtotal` or None on failure.
-    """
-    # set global hover time used by model components (mirrors inner_solve_for_Wtotal)
+    """Run the already-setup `prob` with a fixed `W_total` and hover time."""
     from qbit.components import sizing_comps as sc
     orig_T = getattr(sc, 'T_HOVER', None)
     sc.T_HOVER = float(t_hover_sample)
@@ -71,154 +63,90 @@ def eval_with_fixed_W_from_cached_prob(prob, t_hover_sample: float, W_fixed: flo
 
 
 def main():
-    p = argparse.ArgumentParser(description='UQ evaluate E_req with fixed W_total and fixed design')
-    p.add_argument('--n-mc', type=int, default=2000, help='Number of MC/LHS samples (default: 2000)')
-    p.add_argument('--n-jobs', type=int, default=1, help='Parallel jobs for evaluation (optional)')
-    p.add_argument('--seed', type=int, default=123, help='RNG seed')
-    p.add_argument('--quick', action='store_true', help='Quick test: override n_mc to 200')
-    p.add_argument('--W-total', type=float, default=None, help='Fixed W_total in N (if omitted, use deterministic value)')
-    p.add_argument('--x-det', nargs=4, type=float, default=[29.79942897, 0.26030369, 1.3, 0.23397521],
+    p = argparse.ArgumentParser(description='Sweep hover time and calculate power consumption in Watts')
+    p.add_argument('--W-total', type=float, default=6.981*9.81, help='Fixed W_total in N')
+    p.add_argument('--x-det', nargs=4, type=float, default=[31.36, 0.2227, 1.3, 0.1895],
                    help='Deterministic design vector: V_inf r J S_w')
     args = p.parse_args()
 
-    n_mc = 200 if args.quick else args.n_mc
     V_inf, r, J, S_w = args.x_det
-
     payload_kg = 3.0
     range_m = 15000.0
     n_c = 2
 
-    print(f'Fixed-W UQ: x_det={args.x_det}, n_mc={n_mc}, seed={args.seed}')
+    # Calculate constant cruise time (t = distance / speed) to get total mission time
+    t_cruise = range_m / V_inf
 
-    # Instantiate a RobustOptimizer only to access its sampling defaults
-    uq = RobustOptimizer(payload_kg=payload_kg, range_m=range_m, n_c=n_c,
-                         n_mc=n_mc, seed=args.seed, n_jobs=args.n_jobs)
+    # Generate a clean sweep from 55s to 101s in increments of 5 seconds (including 101s exactly)
+    samples = list(np.arange(55.0, 101.0, 5.0)) + [101.0]
 
-    # Pre-generate MC samples (CRN)
-    samples = sample_t_hover(n_mc, uq.mean_t, uq.std_t, uq.shift_t, seed=uq.seed, method=uq.sampling_method)
+    # Force the baseline reference evaluation to occur at the design-point optimization value (101s)
+    design_hover_time = 55.0
 
-    # Deterministic reference: run inner solve at mean hover time to get E_req_det
-    print('Computing deterministic reference (inner solve at mean hover time)...')
-    det = inner_solve_for_Wtotal(uq.mean_t, uq.payload_kg, uq.range_m, uq.n_c, design_vars=tuple(args.x_det))
+    print(f'Computing baseline reference configuration sized at {design_hover_time}s hover...')
+    det = inner_solve_for_Wtotal(design_hover_time, payload_kg, range_m, n_c, design_vars=tuple(args.x_det))
     if not isinstance(det, dict):
-        print('Deterministic inner solve failed; aborting.')
+        print('Baseline initialization failed; aborting.')
         return 1
 
-    E_req_det = float(det['E_req'])
-    # Determine fixed W_total: user-provided or deterministic
     W_fixed = float(args.W_total) if args.W_total is not None else float(det['W_total'])
-    print(f'Deterministic E_req: {E_req_det:.3f} J; using W_fixed = {W_fixed:.3f} N')
 
-    # Retrieve (or create) the cached Problem that inner_solve_for_Wtotal created
-    # Key must match inner_solve_for_Wtotal's cache key construction
+    # Retrieve cached Problem instance
     key = (float(V_inf), float(r), float(J), float(S_w), float(payload_kg), float(range_m), int(n_c))
     prob = None
     if hasattr(inner_solve_for_Wtotal, '_prob_cache'):
         prob = inner_solve_for_Wtotal._prob_cache.get(key)
 
-    # If cache not available, attempt a single inner call to populate it
     if prob is None:
-        _ = inner_solve_for_Wtotal(uq.mean_t, uq.payload_kg, uq.range_m, uq.n_c, design_vars=tuple(args.x_det))
+        _ = inner_solve_for_Wtotal(design_hover_time, payload_kg, range_m, n_c, design_vars=tuple(args.x_det))
         if hasattr(inner_solve_for_Wtotal, '_prob_cache'):
             prob = inner_solve_for_Wtotal._prob_cache.get(key)
 
-    # If still no prob, we will build per-sample problems (fall back)
     use_cached = prob is not None
+    
+    # Calculate fixed energy capacity available based on the 101s optimized battery weight allocation
     if use_cached:
-        print('Using cached Problem for fast fixed-W evaluation.')
+        det_fixed = eval_with_fixed_W_from_cached_prob(prob, design_hover_time, W_fixed, V_inf, r, J, S_w)
     else:
-        print('Cached Problem not available; will setup a Problem per sample (slower).')
-
-    results = []
-    # try parallel evaluation with joblib if requested
-    use_joblib = False
-    if uq.n_jobs is not None and uq.n_jobs != 1:
-        try:
-            from joblib import Parallel, delayed
-            use_joblib = True
-        except Exception:
-            print('joblib not available; falling back to sequential evaluation')
-
-    if use_joblib:
-        from joblib import Parallel, delayed
-        def _eval_t(t):
-            if use_cached:
-                return eval_with_fixed_W_from_cached_prob(prob, t, W_fixed, V_inf, r, J, S_w)
-            else:
-                return inner_solve_for_Wtotal(t, uq.payload_kg, uq.range_m, uq.n_c, design_vars=tuple(args.x_det))
-
-        res_list = Parallel(n_jobs=uq.n_jobs, prefer='processes')(delayed(_eval_t)(t) for t in samples)
-        results = [r if isinstance(r, dict) else None for r in res_list]
-    else:
-        for t in samples:
-            if use_cached:
-                res = eval_with_fixed_W_from_cached_prob(prob, t, W_fixed, V_inf, r, J, S_w)
-            else:
-                # fallback: run inner_solve_for_Wtotal but that will attempt root-finding
-                res = inner_solve_for_Wtotal(t, uq.payload_kg, uq.range_m, uq.n_c, design_vars=tuple(args.x_det))
-            results.append(res if isinstance(res, dict) else None)
-
-    valid = [r for r in results if isinstance(r, dict) and not math.isnan(r.get('E_req', float('nan')))]
-    if len(valid) == 0:
-        print('No valid sample evaluations; aborting.')
-        return 1
-
-    E_arr = np.array([float(p['E_req']) for p in valid])
-
-    # Simple percent where sample E_req exceeds deterministic E_req
-    exceed_det = np.sum(E_arr > E_req_det)
-    pct_exceed_det = 100.0 * exceed_det / len(E_arr)
-
-    # More realistic infeasibility: compare sample E_req to available energy implied by fixed battery mass
-    # Compute battery mass/weight under W_fixed by running a deterministic fixed-W model (if cached)
-    if use_cached:
-        det_fixed = eval_with_fixed_W_from_cached_prob(prob, uq.mean_t, W_fixed, V_inf, r, J, S_w)
-    else:
-        det_fixed = inner_solve_for_Wtotal(uq.mean_t, uq.payload_kg, uq.range_m, uq.n_c, design_vars=tuple(args.x_det))
-
-    if not isinstance(det_fixed, dict):
-        print('Could not compute battery for fixed W_total; reporting only simple exceedance metric.')
-        print(f'Percent samples with E_req > E_req_det: {pct_exceed_det:.3f} %')
-        return 0
+        det_fixed = inner_solve_for_Wtotal(design_hover_time, payload_kg, range_m, n_c, design_vars=tuple(args.x_det))
 
     W_bat_fixed = float(det_fixed['W_battery'])
-    # available energy [J]
-    E_avail_fixed = (W_bat_fixed / G) * BATTERY_DENSITY * BATTERY_EFF * 3600.0
+    E_avail_fixed_J = (W_bat_fixed / G) * BATTERY_DENSITY * BATTERY_EFF * 3600.0
+    E_avail_fixed_Wh = E_avail_fixed_J / 3600.0
+    
+    # Terminal Output Header
+    print('\n' + '='*85)
+    print(f" HOVER SWEEP ANALYSIS (55s to 101s) | Fixed Weight: {W_fixed:.2f} N")
+    print(f" Sized Baseline Hover Time        : {design_hover_time} s")
+    print(f" Available Battery Energy Cap     : {E_avail_fixed_Wh:.2f} Wh")
+    print('='*85)
+    print(f"{'Hover Time':<12} | {'Total Mission Energy':<22} | {'Avg Mission Power':<20} | {'Status':<15}")
+    print('-'*85)
 
-    # debug: show E_arr stats and compute exceedance two ways
-    print(f'DEBUG: E_avail_fixed={E_avail_fixed:.1f} J from W_battery={W_bat_fixed:.3f} N')
-    print(f'DEBUG: E_arr min={E_arr.min():.1f}, mean={E_arr.mean():.1f}, max={E_arr.max():.1f}')
-    mask = E_arr > E_avail_fixed
-    exceed_avail = int(np.sum(mask))
-    pct_exceed_avail = 100.0 * exceed_avail / len(E_arr)
-    # also compute via python loop for sanity
-    exceed_loop = sum(1 for v in E_arr if v > E_avail_fixed)
-    if exceed_loop != exceed_avail:
-        print(f'DEBUG: mismatch counts: vectorized={exceed_avail} loop={exceed_loop}')
-    if exceed_avail > 0:
-        print(f'DEBUG: first exceed indices: {np.where(mask)[0][:10].tolist()}')
-
-    print('\n--- Fixed-W UQ Results ---')
-    print(f'Samples evaluated       : {len(results)}')
-    print(f'Valid samples           : {len(valid)}')
-    print(f'Percent E_req > E_req_det : {pct_exceed_det:.3f} % ({exceed_det}/{len(valid)})')
-    print(f'Fixed battery energy (J): {E_avail_fixed:.1f} J (from W_battery={W_bat_fixed:.3f} N)')
-    print(f'Percent E_req > E_avail_fixed : {pct_exceed_avail:.3f} % ({exceed_avail}/{len(valid)})')
-
-    # Save simple CSV of sample t_hover and E_req for further analysis
-    out_dir = Path(HERE) / 'uq_outputs'
-    out_dir.mkdir(exist_ok=True)
-    csv_p = out_dir / 'fixedW_Ereq_samples.csv'
-    # also save exceeds_avail flag aligned to valid samples
-    # map samples -> valid indices: keep only samples corresponding to valid entries
-    valid_samples = []
-    for i, r in enumerate(results):
-        if isinstance(r, dict) and not math.isnan(r.get('E_req', float('nan'))):
-            valid_samples.append(samples[i])
-    arr_to_save = np.column_stack((np.array(valid_samples), E_arr, mask.astype(int)))
-    np.savetxt(csv_p, arr_to_save, delimiter=',', header='t_hover,E_req_J,exceeds_avail', comments='')
-    print(f'Saved sample E_req to {csv_p}')
-
+    for t in samples:
+        if use_cached:
+            res = eval_with_fixed_W_from_cached_prob(prob, t, W_fixed, V_inf, r, J, S_w)
+        else:
+            res = inner_solve_for_Wtotal(t, payload_kg, range_m, n_c, design_vars=tuple(args.x_det))
+        
+        if isinstance(res, dict) and not math.isnan(res.get('E_req', float('nan'))):
+            E_req_J = float(res['E_req'])
+            E_req_Wh = E_req_J / 3600.0
+            
+            # Mission total duration = current hover segment time + fixed forward flight cruise time
+            t_total = t + t_cruise
+            
+            # Average Power Consumption (W) = Energy (J) / Total Time (s)
+            P_avg_mission = E_req_J / t_total
+            
+            # Use a tiny buffer for floating-point precision at exactly 101s
+            status = "FEASIBLE" if E_req_J <= (E_avail_fixed_J + 1e-2) else "OUT OF BATTERY"
+            
+            print(f"{t:<10.1f} s | {E_req_Wh:<19.2f} Wh | {P_avg_mission:<17.2f} W  | {status:<15}")
+        else:
+            print(f"{t:<10.1f} s | {'Simulation Failed':<22} | {'N/A':<20} | {'FAILED':<15}")
+            
+    print('='*85 + '\n')
     return 0
 
 

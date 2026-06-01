@@ -37,7 +37,7 @@ def main():
 
     # Deterministic design point (from run_qbit.py result)
     # Order expected by inner_solve_for_Wtotal: [V_inf, r, J, S_w]
-    x_det = [29.60, 0.2646, 1.300, 0.2386]
+    x_det = [28.98207331, 0.26220991, 1.3, 0.22452812]
     det_W_input = 70.1  # N, for optional deterministic marker on MTOM histogram
     det_cl_input = 0.5505  # for optional deterministic marker on cruise CL plot
     # Mission configuration (match deterministic run)
@@ -101,7 +101,32 @@ def main():
     Wtot = np.array([p['W_total'] for p in valid_results])
     meanW = float(np.mean(Wtot))
     stdW = float(np.std(Wtot, ddof=0))
-    p_lo, p_hi = np.percentile(Wtot / 9.80665, [2.5, 97.5])  # convert to kg for PI
+    W_kg = Wtot / 9.80665  # move this up — you use it later anyway
+
+    p_lo   = float(np.percentile(W_kg, 2.5))
+    p_50   = float(np.percentile(W_kg, 50.0))   # ← median, per paper definition
+    p_hi   = float(np.percentile(W_kg, 97.5))
+
+    # ── Confidence Ratio (West et al.) ───────────────────────────────────────
+    # CR = Margin / Uncertainty
+    # Margin      = W_cert - W_p97.5          (distance to budget from upper bound)
+    # Uncertainty = W_p97.5 - W_p50           (upper-tail spread, per paper definition)
+    # W_cert      = programme mass budget [kg]
+
+    W_CERT_KG = 7.850   # kg — set to worst-case deterministic upper bound
+                        # or replace with a fixed programme budget e.g. 8.0 kg
+
+    cr_margin      = W_CERT_KG - p_hi
+    cr_uncertainty = p_hi - p_50
+    cr             = cr_margin / cr_uncertainty if cr_uncertainty > 0 else float('nan')
+
+    # CR figure 19 case classification
+    if cr < 0:
+        cr_case = "Fig.19(c) — NEGATIVE margin, exceeds budget"
+    elif 0 <= cr < 1:
+        cr_case = "Fig.19(b) — small positive margin, reliability in question"
+    else:
+        cr_case = "Fig.19(a) — large positive margin, reliable"
 
     # Extract constraint arrays for violation analysis
     cruise_CL_arr = np.array([p['cruise_CL'] for p in valid_results])
@@ -341,6 +366,24 @@ def main():
     print(f"{'Disk Loading':<20} {DL_MAX:<15.1f} {disk_loading_violations:<15} {disk_loading_violation_pct:<12.3f}%")
     print(f"{'Blade Loading':<20} {BL_MAX:<15.4f} {blade_loading_violations:<15} {blade_loading_violation_pct:<12.3f}%")
     print('='*60)
+
+    print('\n--- UQ Evaluation Results ---')
+    print(f'Samples run      : {len(results)}')
+    print(f'Failures         : {int(fail_count)} ({fail_rate:.2f} % )')
+    print(f'MTOM mean (N)    : {meanW:.2f} N')
+    print(f'MTOM std  (N)    : {stdW:.2f} N')
+    print(f'MTOM mean (kg)   : {meanW/9.80665:.3f} kg')
+    print(f'MTOM median (kg) : {p_50:.3f} kg')          # ← add median
+    print(f'95% PI (kg)      : [{p_lo:.3f}, {p_hi:.3f}]')
+    print()
+    print(f'--- Confidence Ratio (West et al.) ---')
+    print(f'  W_cert          : {W_CERT_KG:.3f} kg')
+    print(f'  Margin  (M)     : {cr_margin*1000:+.1f} g  '
+        f'({W_CERT_KG:.3f} - {p_hi:.3f})')
+    print(f'  Uncertainty (U) : {cr_uncertainty*1000:.1f} g  '
+        f'({p_hi:.3f} - {p_50:.3f})')
+    print(f'  CR = M/U        : {cr:+.4f}')
+    print(f'  Classification  : {cr_case}')
 
     return 0
 

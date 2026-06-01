@@ -1,0 +1,5 @@
+{
+    "python.analysis.extraPaths": [
+        "./UMDO_tutorial/qbit/qbit"
+    ]
+}

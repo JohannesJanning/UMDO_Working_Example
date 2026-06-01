@@ -22,6 +22,8 @@ dist = lognorm(s, loc=loc, scale=scale)
 # --- EXACT PERCENTILE BOUNDS (alpha=0.05) ---
 p_lower = 0.025
 p_upper = 0.975
+p_99 = 0.99
+bound_99 = dist.ppf(p_99)
 bound_lower = dist.ppf(p_lower)
 bound_upper = dist.ppf(p_upper)
 
@@ -74,9 +76,44 @@ ax2.grid(True, which='both', linestyle='--', alpha=0.5)
 plt.tight_layout()
 plt.show()
 
+# --- ADDITIONAL CLEAN PDF PLOT ---
+fig_clean, ax_clean = plt.subplots(figsize=(8, 5))
+
+# PDF curve
+ax_clean.plot(x, pdf, color='firebrick', lw=2.5)
+
+# 95% interval shading
+ax_clean.fill_between(
+    x,
+    pdf,
+    where=(x >= bound_lower) & (x <= bound_upper),
+    color='firebrick',
+    alpha=0.15
+)
+
+# Percentile bounds only
+ax_clean.axvline(bound_lower, color='darkred', ls=':', lw=1.5)
+ax_clean.axvline(bound_upper, color='darkred', ls=':', lw=1.5)
+
+# Labels and styling
+ax_clean.set_title('Hover Time PDF', fontweight='bold', fontsize=20)
+ax_clean.set_xlabel('Hover Time Duration $t_{hover}$ [seconds]', fontsize=18)
+ax_clean.set_ylabel('Density', fontsize=18)
+ax_clean.tick_params(axis='both', labelsize=14)
+
+ax_clean.grid(True, which='both', linestyle='--', alpha=0.5)
+
+plt.tight_layout()
+plt.show()
+
 # Print statements for your .pptx Documentation
 print(f"--- Uncertainty Characterization for RMDO ---")
 print(f"Lower Bound (2.5th percentile): {bound_lower:.3f} s")
 print(f"Upper Bound (97.5th percentile): {bound_upper:.3f} s")
 print(f"Total Width of 95% Interval: {bound_upper - bound_lower:.3f} s")
 print(f"Probability mission exceeds 60s: {(1 - dist.cdf(60))*100:.2f}%")
+
+print(f"\n--- 99th Percentile ---")
+print(f"99th percentile: {bound_99:.1f} s")
+print(f"Probability mission exceeds 100s: {(1 - dist.cdf(100))*100:.2f}%")
+print(f"Probability mission exceeds 120s: {(1 - dist.cdf(120))*100:.2f}%")

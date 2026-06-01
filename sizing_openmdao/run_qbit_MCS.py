@@ -263,7 +263,7 @@ class RobustOptimizer:
     seed: int | None = 123
     mc_samples: np.ndarray | None = None
     sampling_method: str = "lhs"
-    cl_margin: float = 0.0001  # small margin to ensure we don't optimize right up to the CL_MAX constraint
+    cl_margin: float = 0.0000  # small margin to ensure we don't optimize right up to the CL_MAX constraint
     _obj_calls: int = 0
     eval_times: list | None = None
     inner_calls: int = 0
@@ -311,9 +311,10 @@ class RobustOptimizer:
 
         # Use 1.96 for 97.5th percentile (upper bound of 95% CI)
         # This matches the 97.5th percentile used in post-processing
-        p97_5_W = meanW + 1.96 * stdW
+        p97_5_W = meanW + 2 * stdW
 
         # Objective: minimize the estimated 97.5th-percentile W (in N)
+        #U = float(meanW)
         U = float(p97_5_W)
 
         line = (f"{bar} [{self._obj_calls}/{self.maxiter}] ETA {eta_str} "
@@ -420,19 +421,27 @@ class RobustOptimizer:
                          seed=self.seed, method=self.sampling_method)
         print("Starting robust optimization (using common random numbers).")
         # Build constraints enforcing mean metrics across MC samples
+        
+        
         def constr_cruise_CL(x):
             stats = self._mc_stats(x)
             if stats is None:
                 return -1e6
-            # Reliability-based (chance) constraint: enforce that the
-            # upper confidence bound of cruise CL stays below CL_MAX.
-            cl_samples = np.array([p['cruise_CL'] for p in stats['results'] if isinstance(p, dict)])
-            if cl_samples.size == 0:
-                return -1e6
-            mean_cl = float(stats['mean_res']['cruise_CL'])
-            std_cl = float(np.std(cl_samples, ddof=0))
-            # use multiplier 2.576 (approx 99% one-sided) as in reliable optimizer
-            return float(CL_MAX - (mean_cl + 2.50 * std_cl) - self.cl_margin)
+            return float(CL_MAX - stats['mean_res']['cruise_CL'])
+        
+        #def constr_cruise_CL(x):
+        #    stats = self._mc_stats(x)
+        #    if stats is None:
+        #        return -1e6
+        #    # Reliability-based (chance) constraint: enforce that the
+        #    # upper confidence bound of cruise CL stays below CL_MAX.
+        #    cl_samples = np.array([p['cruise_CL'] for p in stats['results'] if isinstance(p, dict)])
+        #    if cl_samples.size == 0:
+        #        return -1e6
+        #    mean_cl = float(stats['mean_res']['cruise_CL'])
+        #    std_cl = float(np.std(cl_samples, ddof=0))
+        #    # use multiplier 2.43 for 100 MCS runs (approx 97.5%) as in reliable optimizer
+        #    return float(CL_MAX - (mean_cl + 2.43 * std_cl) - self.cl_margin)
 
         def constr_disk_loading(x):
             stats = self._mc_stats(x)
@@ -488,8 +497,8 @@ class RobustOptimizer:
 
 
 if __name__ == '__main__':
-    opt = RobustOptimizer(payload_kg=3.0, range_m=15_000.0, n_c=2, n_mc=1000, seed=123)
-    x0 = [33.0, 0.22, 1.3, 0.2]
+    opt = RobustOptimizer(payload_kg=3.0, range_m=15_000.0, n_c=2, n_mc=100, seed=123)
+    x0 = [28.70, 0.2678, 1.3, 0.2296]
     res = opt.run(x0=x0, method='SLSQP')
     print('\nOptimization finished:')
     print(res)

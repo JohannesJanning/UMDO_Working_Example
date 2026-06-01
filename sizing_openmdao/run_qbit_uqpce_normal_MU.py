@@ -3,22 +3,25 @@ UQPCE-based robust MDO for the QBiT UAV sizing model.
 
 Minimises the 95th-percentile upper CI of W_total (MTOM) subject to
 robust constraints on cruise CL, disk loading, and blade loading,
-under lognormal uncertainty in t_hover.
+under joint uncertainty in:
+  1. t_hover (operational, lognormal)
+  2. eta_hover (epistemic, truncated normal)
 """
 
 from __future__ import annotations
 
 import os
-import time  # ← ADD THIS IMPORT
+import time
 import warnings
-
+from scipy.stats import norm, truncnorm
 import matplotlib
-matplotlib.use('Agg')  # must be before any other matplotlib import
+matplotlib.use('Agg')
 
 import numpy as np
 import openmdao.api as om
 import yaml
 from scipy.optimize import brentq
+from scipy.stats import truncnorm
 
 # --- QBiT ---
 from qbit.models.qbit_model import build_qbit_model
@@ -36,7 +39,7 @@ from uqpce.pce.io import read_input_file
 from uqpce.mdao import interface
 
 # ---------------------------------------------------------------------------
-# Helper function for time formatting
+# Helper functions
 # ---------------------------------------------------------------------------
 def format_time(seconds):
     """Format time in seconds to a readable string."""
@@ -51,29 +54,8 @@ def format_time(seconds):
         return f"{hours:.1f} hours ({int(hours)}h {int(minutes)}m)"
 
 
-# ---------------------------------------------------------------------------
-# File paths
-# ---------------------------------------------------------------------------
-_HERE = os.path.dirname(os.path.abspath(__file__))
-YAML_INPUT   = os.path.join(_HERE, "uqpce_input.yaml")
-MATRIX_FILE  = os.path.join(_HERE, "uqpce_run_matrix.dat")
-
-
-# ---------------------------------------------------------------------------
-# UQPCE setup
-# ---------------------------------------------------------------------------
-def setup_and_init_uqpce() -> dict:
-    """
-    UQPCE uses Normal distribution (optimal Hermite polynomials).
-    Transform to lognormal inside QBiTUQComp.
-    """
-    
-    # LogNormal parameters 
-    shift = 25.0
-    target_mean = 55.0
-    target_std = 18.0
-    
-    # Calculate lognormal μ, σ from shifted lognormal parameters
+def get_shifted_lognormal_params(target_mean, target_std, shift):
+    """Calculate lognormal μ, σ from shifted lognormal parameters."""
     from scipy.optimize import fsolve
     
     def solve_lognorm_params(params):
@@ -83,23 +65,74 @@ def setup_and_init_uqpce() -> dict:
         return [shift + mean_ln - target_mean, var_ln - target_std**2]
     
     mu_ln, sigma_ln = fsolve(solve_lognorm_params, [3.2, 0.5])
+    return mu_ln, sigma_ln, shift
+
+
+def get_truncnorm_params(mean, std, low, high):
+    """Get standard normal bounds for truncated normal."""
+    a = (low - mean) / std
+    b = (high - mean) / std
+    return a, b, mean, std
+
+
+# ---------------------------------------------------------------------------
+# File paths
+# ---------------------------------------------------------------------------
+_HERE = os.path.dirname(os.path.abspath(__file__))
+YAML_INPUT   = os.path.join(_HERE, "uqpce_input.yaml")
+MATRIX_FILE  = os.path.join(_HERE, "uqpce_run_matrix.dat")
+
+
+# ---------------------------------------------------------------------------
+# UQPCE setup with TWO uncertain variables
+# ---------------------------------------------------------------------------
+def setup_and_init_uqpce() -> dict:
+    """
+    UQPCE uses 2D Normal distribution (optimal Hermite polynomials).
+    Transform to:
+      - t_hover: shifted lognormal
+      - eta_hover: truncated normal (via inverse CDF transform)
+    """
     
-    print(f"  Lognormal parameters for transform:")
-    print(f"    μ = {mu_ln:.6f}, σ = {sigma_ln:.6f}, shift = {shift}")
-    print(f"    Verifying: mean = {shift + np.exp(mu_ln + sigma_ln**2/2):.2f}s (target: {target_mean}s)")
-    print(f"    Verifying: std = {np.sqrt(np.exp(2*mu_ln + sigma_ln**2) * (np.exp(sigma_ln**2) - 1)):.2f}s (target: {target_std}s)")
+    # --- t_hover parameters (shifted lognormal) ---
+    t_shift = 25.0
+    t_target_mean = 55.0
+    t_target_std = 18.0
+    t_mu_ln, t_sigma_ln, t_shift = get_shifted_lognormal_params(
+        t_target_mean, t_target_std, t_shift
+    )
     
-    # UQPCE uses STANDARD NORMAL distribution (optimal Hermite)
+    # --- eta_hover parameters (truncated normal) ---
+    eta_mean = 0.65
+    eta_std = 0.05
+    eta_lo = 0.55
+    eta_hi = 0.75
+    eta_a, eta_b, eta_loc, eta_scale = get_truncnorm_params(
+        eta_mean, eta_std, eta_lo, eta_hi
+    )
+    
+    print(f"  t_hover transform: shift={t_shift}, μ={t_mu_ln:.4f}, σ={t_sigma_ln:.4f}")
+    print(f"    → mean={t_shift + np.exp(t_mu_ln + t_sigma_ln**2/2):.1f}s, std={t_target_std}s")
+    print(f"  eta_hover transform: truncated N({eta_mean}, {eta_std}) on [{eta_lo}, {eta_hi}]")
+    
+    # UQPCE uses 2D STANDARD NORMAL distribution
     config = {
         "Variable 0": {
-            "name": "z_hover",
+            "name": "z_t_hover",
+            "distribution": "normal",
+            "mean": 0.0,
+            "stdev": 1.0,
+            "type": "aleatory",
+        },
+        "Variable 1": {
+            "name": "z_eta_hover",
             "distribution": "normal",
             "mean": 0.0,
             "stdev": 1.0,
             "type": "aleatory",
         },
         "Settings": {
-            "order": 6,
+            "order": 5,  # Reduced from 6 for 2D (curse of dimensionality)
             "backend": "Agg",
             "track_convergence_off": True,
             "aleat_samp_size": 100000,
@@ -122,25 +155,32 @@ def setup_and_init_uqpce() -> dict:
         np.savetxt(MATRIX_FILE, X)
 
     d = interface.initialize_dict(YAML_INPUT, MATRIX_FILE)
-    d["lognormal_params"] = {"mu": mu_ln, "sigma": sigma_ln, "shift": shift}
+    d["t_lognormal_params"] = {"mu": t_mu_ln, "sigma": t_sigma_ln, "shift": t_shift}
+    d["eta_truncnorm_params"] = {"a": eta_a, "b": eta_b, "loc": eta_loc, "scale": eta_scale}
     
     return d
 
 
 # ---------------------------------------------------------------------------
-# Inner solver (unchanged)
+# Inner solver (with BOTH uncertainties)
 # ---------------------------------------------------------------------------
 def inner_solve_for_Wtotal(
     prob: om.Problem,
     t: float,
+    eta: float,
     payload: float,
     range_m: float,
     n_c: int,
     dvars: tuple[float, float, float, float],
 ) -> dict:
     V, r, J, Sw = dvars
+    
+    # Store original values
     _orig_t = getattr(sc, "T_HOVER", None)
+    _orig_eta = getattr(sc, "ETA_HOVER", None)
+    
     sc.T_HOVER = float(t)
+    sc.ETA_HOVER = float(eta)
 
     try:
         def eval_res(W: float) -> float:
@@ -172,7 +212,7 @@ def inner_solve_for_Wtotal(
                     found = True
                     break
             if not found:
-                raise om.AnalysisError(f"No sign change in weight residual for t={t:.1f}s")
+                raise om.AnalysisError(f"No sign change for t={t:.1f}s, eta={eta:.3f}")
 
         root = brentq(eval_res, wl, wh, xtol=1e-3, maxiter=50)
 
@@ -184,30 +224,43 @@ def inner_solve_for_Wtotal(
         }
 
     except Exception as exc:
-        print(f"  [inner_solve] FAILED t={t:.1f}s: {exc}")
+        print(f"  [inner_solve] FAILED t={t:.1f}s, eta={eta:.3f}: {exc}")
         return None
 
     finally:
+        # Restore original values
         if _orig_t is None:
             if hasattr(sc, "T_HOVER"):
                 del sc.T_HOVER
         else:
             sc.T_HOVER = _orig_t
+        
+        if _orig_eta is None:
+            if hasattr(sc, "ETA_HOVER"):
+                del sc.ETA_HOVER
+        else:
+            sc.ETA_HOVER = _orig_eta
 
 
 # ---------------------------------------------------------------------------
-# OpenMDAO component
+# OpenMDAO component with 2D uncertainty
 # ---------------------------------------------------------------------------
 class QBiTUQComp(om.ExplicitComponent):
     def initialize(self):
         self.options.declare("resp_cnt", types=int)
-        self.options.declare("z_samples", types=np.ndarray)
+        self.options.declare("z_samples", types=np.ndarray)  # shape (n_quad, 2)
         self.options.declare("payload_kg", types=float)
         self.options.declare("range_m", types=float)
         self.options.declare("n_c", types=int)
-        self.options.declare("mu_ln", types=float, default=3.28424)
-        self.options.declare("sigma_ln", types=float, default=0.55403)
-        self.options.declare("shift", types=float, default=25.0)
+        # t_hover params
+        self.options.declare("t_mu_ln", types=float, default=3.28424)
+        self.options.declare("t_sigma_ln", types=float, default=0.55403)
+        self.options.declare("t_shift", types=float, default=25.0)
+        # eta_hover params
+        self.options.declare("eta_a", types=float, default=-2.0)
+        self.options.declare("eta_b", types=float, default=2.0)
+        self.options.declare("eta_loc", types=float, default=0.65)
+        self.options.declare("eta_scale", types=float, default=0.05)
 
     def setup(self):
         self.add_input("V_inf", val=33.0, units="m/s")
@@ -247,21 +300,44 @@ class QBiTUQComp(om.ExplicitComponent):
             float(inputs["S_w"][0]),
         )
         
-        z_samples = self.options["z_samples"]
-        mu_ln = self.options["mu_ln"]
-        sigma_ln = self.options["sigma_ln"]
-        shift = self.options["shift"]
+        z_samples = self.options["z_samples"]  # shape (n_quad, 2)
         
-        t_samples = shift + np.exp(mu_ln + sigma_ln * z_samples)
+        # Transform standard normal samples to physical variables
+        t_mu_ln = self.options["t_mu_ln"]
+        t_sigma_ln = self.options["t_sigma_ln"]
+        t_shift = self.options["t_shift"]
+        
+        eta_a = self.options["eta_a"]
+        eta_b = self.options["eta_b"]
+        eta_loc = self.options["eta_loc"]
+        eta_scale = self.options["eta_scale"]
+        
+        # t_hover: shifted lognormal
+        t_samples = t_shift + np.exp(t_mu_ln + t_sigma_ln * z_samples[:, 0])
+        
+        # eta_hover: truncated normal
+        # Method 1: Using scipy.stats.norm and truncnorm (recommended)
+        from scipy.stats import norm
+        eta_dist = truncnorm(eta_a, eta_b, loc=eta_loc, scale=eta_scale)
+        u_eta = norm.cdf(z_samples[:, 1])  # Standard normal → uniform
+        eta_samples = eta_dist.ppf(u_eta)   # Uniform → truncated normal
+        
+        # Alternative Method 2: Direct transformation (if you prefer)
+        # This is mathematically equivalent but avoids the intermediate uniform
+        # from scipy.stats import norm
+        # phi_z = norm.cdf(z_samples[:, 1])
+        # eta_samples = eta_loc + eta_scale * norm.ppf(phi_z * (norm.cdf(eta_b) - norm.cdf(eta_a)) + norm.cdf(eta_a))
+        # (Method 1 is cleaner)
         
         pl = self.options["payload_kg"]
         rm = self.options["range_m"]
         nc = self.options["n_c"]
 
-        W_arr = np.empty(len(t_samples))
-        cl_arr = np.empty(len(t_samples))
-        dl_arr = np.empty(len(t_samples))
-        bl_arr = np.empty(len(t_samples))
+        n_quad = len(t_samples)
+        W_arr = np.empty(n_quad)
+        cl_arr = np.empty(n_quad)
+        dl_arr = np.empty(n_quad)
+        bl_arr = np.empty(n_quad)
 
         W_PENALTY = float(W_TOTAL_BOUNDS[1])
         CL_PENALTY = CL_MAX * 1.5
@@ -269,8 +345,10 @@ class QBiTUQComp(om.ExplicitComponent):
         BL_PENALTY = BL_MAX * 1.5
 
         n_failed = 0
-        for i, t in enumerate(t_samples):
-            res = inner_solve_for_Wtotal(self._inner, t, pl, rm, nc, dvars)
+        for i in range(n_quad):
+            res = inner_solve_for_Wtotal(
+                self._inner, t_samples[i], eta_samples[i], pl, rm, nc, dvars
+            )
             if res is None:
                 n_failed += 1
                 W_arr[i] = W_PENALTY
@@ -284,7 +362,7 @@ class QBiTUQComp(om.ExplicitComponent):
                 bl_arr[i] = res["blade_loading"]
 
         if n_failed:
-            print(f"  [compute] {n_failed}/{len(t_samples)} samples failed")
+            print(f"  [compute] {n_failed}/{n_quad} samples failed")
 
         outputs["W_total"] = W_arr
         outputs["cruise_CL"] = cl_arr
@@ -296,11 +374,12 @@ class QBiTUQComp(om.ExplicitComponent):
 # Main optimisation
 # ---------------------------------------------------------------------------
 def run():
-    # Record total start time
     total_start_time = time.time()
     
     print("=" * 70)
-    print("UQPCE ROBUST DESIGN OPTIMIZATION")
+    print("UQPCE ROBUST DESIGN OPTIMIZATION WITH JOINT UNCERTAINTY")
+    print("  • t_hover: shifted lognormal (aleatory)")
+    print("  • eta_hover: truncated normal (epistemic)")
     print("=" * 70)
     
     # ---- 1. UQPCE initialisation ----------------------------------------
@@ -308,12 +387,11 @@ def run():
     setup_start = time.time()
     d = setup_and_init_uqpce()
     n_quad = d["resp_cnt"]
-    z_samples = d["run_matrix"][:, 0]
-    lognormal_params = d["lognormal_params"]
+    z_samples = d["run_matrix"]  # shape (n_quad, 2)
     setup_time = time.time() - setup_start
     print(f"      ✓ Setup completed in {format_time(setup_time)}")
     print(f"      • PCE quadrature points: {n_quad}")
-    print(f"      • Transform: t_hover = {lognormal_params['shift']} + exp({lognormal_params['mu']:.4f} + {lognormal_params['sigma']:.4f}·Z)")
+    print(f"      • 2D uncertainty space")
     
     # ---- 2. Build outer problem -----------------------------------------
     print("\n[2/5] Building optimization problem...")
@@ -332,14 +410,18 @@ def run():
         payload_kg=3.0,
         range_m=15000.0,
         n_c=2,
-        mu_ln=lognormal_params["mu"],
-        sigma_ln=lognormal_params["sigma"],
-        shift=lognormal_params["shift"],
+        t_mu_ln=d["t_lognormal_params"]["mu"],
+        t_sigma_ln=d["t_lognormal_params"]["sigma"],
+        t_shift=d["t_lognormal_params"]["shift"],
+        eta_a=d["eta_truncnorm_params"]["a"],
+        eta_b=d["eta_truncnorm_params"]["b"],
+        eta_loc=d["eta_truncnorm_params"]["loc"],
+        eta_scale=d["eta_truncnorm_params"]["scale"],
     )
     prob.model.add_subsystem("eval", comp, promotes=["*"])
     
     uq = UQPCEGroup(
-        significance= d["significance"],
+        significance=d["significance"],
         var_basis=d["var_basis"],
         norm_sq=d["norm_sq"],
         resampled_var_basis=d["resampled_var_basis"],
@@ -354,7 +436,7 @@ def run():
     promoted = [
         "W_total", "cruise_CL", "disk_loading", "blade_loading",
         "W_total:ci_upper", "W_total:mean", "W_total:variance",
-        "cruise_CL:ci_upper", "cruise_CL:mean",
+        "cruise_CL:ci_upper",
         "disk_loading:ci_upper",
         "blade_loading:ci_upper",
     ]
@@ -368,37 +450,17 @@ def run():
     prob.model.add_design_var("J", lower=J_BOUNDS[0], upper=J_BOUNDS[1])
     prob.model.add_design_var("S_w", lower=S_W_BOUNDS[0], upper=S_W_BOUNDS[1])
     
-    #prob.model.add_constraint("cruise_CL:ci_upper", upper=CL_MAX)
-    prob.model.add_constraint("cruise_CL:mean", upper=CL_MAX)
+    prob.model.add_constraint("cruise_CL:ci_upper", upper=CL_MAX)
     prob.model.add_constraint("disk_loading:ci_upper", upper=DL_MAX)
     prob.model.add_constraint("blade_loading:ci_upper", upper=BL_MAX)
     
-    # Create an objective that combines mean and variance
-    prob.model.add_subsystem('objective_comp',
-        om.ExecComp('obj = 0.5 *mean + 0.5 * var',
-                    mean={'units': 'N'}, var={'units': 'N**2'}),
-        promotes_inputs=[('mean', 'W_total:mean'), ('var', 'W_total:variance')],
-        promotes_outputs=[('obj', 'objective')])
-
-    prob.model.add_objective("W_total:ci_upper") 
+    prob.model.add_objective("W_total:mean")
     
     prob.setup()
     print("      ✓ Problem built successfully")
     
-    # ---- 3. PCE validation at initial design ----------------------------
-    print("\n[3/5] Validating PCE surrogate at initial design...")
-    prob.run_model()
-    W_quad = prob.get_val("W_total")
-    pce_mean = prob.get_val("W_total:mean")[0]
-    pce_var = prob.get_val("W_total:variance")[0]
-    pce_ci = prob.get_val("W_total:ci_upper")[0]
-    G_val = 9.80665
-    print(f"      • PCE mean: {pce_mean/G_val:.3f} kg")
-    print(f"      • PCE std:  {pce_var**0.5:.2f} N")
-    print(f"      • PCE 95th: {pce_ci/G_val:.3f} kg")
-    
-    # ---- 4. Run optimisation --------------------------------------------
-    print("\n[4/5] Running robust optimization...")
+    # ---- 3. Run optimisation --------------------------------------------
+    print("\n[3/5] Running robust optimization...")
     print("-" * 50)
     opt_start_time = time.time()
     prob.run_driver()
@@ -406,7 +468,7 @@ def run():
     opt_duration = opt_end_time - opt_start_time
     print("-" * 50)
     
-    # ---- 5. Results -----------------------------------------------------
+    # ---- 4. Results -----------------------------------------------------
     success = prob.driver.result.success if hasattr(prob.driver, "result") else "N/A"
     
     print("\n" + "=" * 60)
@@ -423,56 +485,15 @@ def run():
     print(f"  Robust MTOM    : {prob.get_val('W_total:ci_upper')[0]/G:.3f} kg  (95th pct)")
     print()
     print("  Robust constraint values vs limits:")
-    print(f"    cruise_CL_mean    : {prob.get_val('cruise_CL:mean')[0]:.4f}  ≤ {CL_MAX}")
-    print(f"    cruise_CL_upper    : {prob.get_val('cruise_CL:ci_upper')[0]:.4f}  ≤ {CL_MAX}")
+    print(f"    cruise_CL    : {prob.get_val('cruise_CL:ci_upper')[0]:.4f}  ≤ {CL_MAX}")
     print(f"    disk_loading : {prob.get_val('disk_loading:ci_upper')[0]:.2f} N/m²  ≤ {DL_MAX}")
     print(f"    blade_loading: {prob.get_val('blade_loading:ci_upper')[0]:.4f}  ≤ {BL_MAX}")
     
-    # Get iteration info
     if hasattr(prob.driver, "iter_count"):
         print(f"\n  Optimization iterations: {prob.driver.iter_count}")
-    if hasattr(prob.driver, "result") and hasattr(prob.driver.result, "nfev"):
-        print(f"  Function evaluations: {prob.driver.result.nfev}")
     
-    print("=" * 60)
-    
-    # ---- Validation at optimal design -----------------------------------
-    print("\n[5/5] Validating at optimal design with Monte Carlo...")
-    val_start_time = time.time()
-    
-    from run_qbit_MCS import RobustOptimizer, sample_t_hover
-    uq_ref = RobustOptimizer(payload_kg=3.0, range_m=15000.0, n_c=2, n_mc=10000, seed=42)
-    uq_ref.mc_samples = sample_t_hover(2000, uq_ref.mean_t, uq_ref.std_t,
-                                        uq_ref.shift_t, seed=42)
-    x0 = [prob.get_val("V_inf")[0], prob.get_val("r")[0],
-          prob.get_val("J")[0], prob.get_val("S_w")[0]]
-    mc_stats = uq_ref._mc_stats(x0)
-    
-    val_duration = time.time() - val_start_time
-    
-    if mc_stats:
-        mc_W = [r["W_total"] for r in mc_stats["results"] if r]
-        mc_mean = np.mean(mc_W)
-        mc_std = np.std(mc_W)
-        pce_mean = prob.get_val("W_total:mean")[0]
-        pce_std = prob.get_val("W_total:variance")[0]**0.5
-        print(f"\n  PCE mean = {pce_mean:.2f} N,  MC mean = {mc_mean:.2f} N,  "
-              f"error = {abs(pce_mean-mc_mean):.2f} N ({abs(pce_mean-mc_mean)/mc_mean*100:.1f}%)")
-        print(f"  PCE std  = {pce_std:.2f} N,   MC std  = {mc_std:.2f} N,   "
-              f"error = {abs(pce_std-mc_std):.2f} N ({abs(pce_std-mc_std)/mc_std*100:.1f}%)")
-    
-    # ---- TIMING SUMMARY -------------------------------------------------
     total_duration = time.time() - total_start_time
-    
-    print("\n" + "=" * 60)
-    print("TIMING SUMMARY")
-    print("=" * 60)
-    print(f"PCE setup time     : {format_time(setup_time)}")
-    print(f"Optimization time  : {format_time(opt_duration)}")
-    print(f"Validation time    : {format_time(val_duration)}")
-    print(f"Total runtime      : {format_time(total_duration)}")
-    print("=" * 60)
-    print("\n OPTIMIZATION COMPLETE")
+    print(f"\n  Total runtime: {format_time(total_duration)}")
     print("=" * 60)
 
 

@@ -32,13 +32,13 @@ RANGE_M = 15000.0         # Mission range [m] (one-way)
 N_CUSTOMERS = 2           # Number of customers
 
 # Design point to evaluate
-V_INF = 29.72              # Cruise speed [m/s]
-R = 0.2652                # Rotor radius [m]
+V_INF = 31.36              # Cruise speed [m/s]
+R = 0.2227                # Rotor radius [m]
 J = 1.300                 # Propeller advance ratio [-]
-S_W = 0.2415              # Wing area [m²]
+S_W = 0.1895              # Wing area [m²]
 
 # Hover time setting (choose one)
-T_HOVER = 101.0            # Mean hover time [s] (typical mission)
+T_HOVER = 55.0            # Mean hover time [s] (typical mission)
 # T_HOVER = 101.0         # 97.5th percentile [s] (conservative/worst-case)
 
 # Verbose output

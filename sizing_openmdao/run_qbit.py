@@ -133,6 +133,14 @@ class Stage1Problem:
             DL_MAX=DL_MAX, BL_MAX=BL_MAX, CL_MAX=CL_MAX
         )
 
+        print("\nFull precision design vector [V_inf, r, J, S_w, W_total]:")
+        print(repr([
+            float(prob.get_val('V_inf')[0]),
+            float(prob.get_val('r')[0]),
+            float(prob.get_val('J')[0]),
+            float(prob.get_val('S_w')[0]),
+        ]))
+
         if verbose:
             print(result.summary())
             print("=" * 60)

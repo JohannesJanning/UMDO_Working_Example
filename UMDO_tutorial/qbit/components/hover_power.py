@@ -8,8 +8,7 @@ where T = W_total / N_rotor  (hover trim condition)
 import numpy as np
 import openmdao.api as om
 from qbit.constants import RHO_AIR, ETA_HOVER, N_ROTOR, G
-from qbit import constants as _c
-from qbit.constants import RHO_AIR, N_ROTOR, G
+
 
 class HoverPowerComp(om.ExplicitComponent):
     """
@@ -30,8 +29,7 @@ class HoverPowerComp(om.ExplicitComponent):
         r = inputs['r'][0]
         T = W / N_ROTOR
         A = np.pi * r ** 2
-        P_per = (1.0 / _c.ETA_HOVER) * T ** 1.5 / np.sqrt(2.0 * RHO_AIR * A)
-        #P_per = (1.0 / ETA_HOVER) * T ** 1.5 / np.sqrt(2.0 * RHO_AIR * A)
+        P_per = (1.0 / ETA_HOVER) * T ** 1.5 / np.sqrt(2.0 * RHO_AIR * A)
         outputs['P_hover'] = N_ROTOR * P_per
 
     def compute_partials(self, inputs, partials):
@@ -42,10 +40,10 @@ class HoverPowerComp(om.ExplicitComponent):
         denom = np.sqrt(2.0 * RHO_AIR * A)
 
         # dP/dW: chain through T = W/N
-        dP_dT = N_ROTOR * (1.0 / _c.ETA_HOVER) * 1.5 * T ** 0.5 / denom
+        dP_dT = N_ROTOR * (1.0 / ETA_HOVER) * 1.5 * T ** 0.5 / denom
         partials['P_hover', 'W_total'] = dP_dT / N_ROTOR
 
         # dP/dr: through A = π·r²
-        dP_dA = N_ROTOR * (1.0 / _c.ETA_HOVER) * T ** 1.5 * (-0.5) * (2.0 * RHO_AIR * A) ** (-1.5) * 2.0 * RHO_AIR
+        dP_dA = N_ROTOR * (1.0 / ETA_HOVER) * T ** 1.5 * (-0.5) * (2.0 * RHO_AIR * A) ** (-1.5) * 2.0 * RHO_AIR
         dA_dr = 2.0 * np.pi * r
         partials['P_hover', 'r'] = dP_dA * dA_dr
