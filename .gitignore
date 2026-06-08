@@ -12,6 +12,7 @@ reports/
 .DS_Store
 Thumbs.db
 .vscode/
+.vscode/
 
 # Environments
 .venv/
