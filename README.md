@@ -1,4 +1,4 @@
-# QBiT UAV Design under Uncertainty
+# UMDO Lab: UAV Design under Uncertainty Working Example
 
 > **Status:** Under Construction
 
