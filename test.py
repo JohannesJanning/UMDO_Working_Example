@@ -5,8 +5,8 @@ Based on: Kaneko & Martins (2023) "Fleet Design Optimization of Package Delivery
 
 Physics and regression constants are taken directly from the paper (Sec. III).
 
-Stage 0 – model initialization
-Stage 1 – single UAV, single route (1 node), minimum MTOM objective
+Stage 0 - model initialization
+Stage 1 - single UAV, single route (1 node), minimum MTOM objective
 """
 
 import numpy as np

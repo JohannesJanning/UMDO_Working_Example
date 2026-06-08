@@ -41,7 +41,7 @@ def build_qbit_model(payload_kg: float,
 
     # Design variable initial guesses (W_total is NOT here — it is the
     # implicit state of WeightBalanceComp; adding it here would create two
-    # outputs for the same promoted name → singular Jacobian)
+    # outputs for the same promoted name; singular Jacobian)
     ivc.add_output('V_inf', val=33.0,       units='m/s')
     ivc.add_output('r',     val=0.22,       units='m')
     ivc.add_output('J',     val=1.3,        desc='Propeller advance ratio')

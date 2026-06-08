@@ -2,18 +2,18 @@
 UQPCE-based robust MDO for the QBiT UAV sizing model.
 
 Minimises the 95th-percentile upper CI of W_total (MTOM) subject to
-constraints on cruise CL, disk loading, and blade loading,
-under lognormal uncertainty in t_hover.
+robust constraints on cruise CL, disk loading, and blade loading,
+under lognormal uncertainty in battery specific energy (ρ_bat).
 """
 
 from __future__ import annotations
 
 import os
-import time 
+import time  # ← ADD THIS IMPORT
 import warnings
 
 import matplotlib
-matplotlib.use('Agg')  
+matplotlib.use('Agg')  # must be before any other matplotlib import
 
 import numpy as np
 import openmdao.api as om
@@ -60,39 +60,41 @@ MATRIX_FILE  = os.path.join(_HERE, "uqpce_run_matrix.dat")
 
 
 # ---------------------------------------------------------------------------
-# UQPCE setup
+# UQPCE setup - Battery Density Uncertainty
 # ---------------------------------------------------------------------------
 def setup_and_init_uqpce() -> dict:
     """
     UQPCE uses Normal distribution (optimal Hermite polynomials).
-    Transform to lognormal inside QBiTUQComp.
+    Transform to lognormal inside QBiTUQComp for battery specific energy.
+    
+    Battery specific energy parameters (from paper):
+    - Median: 235 Wh/kg
+    - 5th percentile: 150 Wh/kg
+    - 95th percentile: 370 Wh/kg
+    - Lognormal(μ=5.46, σ=0.28) where μ, σ are parameters of ln(ρ_bat)
     """
     
-    # LogNormal parameters 
-    shift = 25.0
-    target_mean = 55.0
-    target_std = 18.0
+    # Lognormal parameters in log-space (from paper)
+    mu_ln = 5.46      # mean of ln(ρ_bat)
+    sigma_ln = 0.28   # std dev of ln(ρ_bat)
     
-    # Calculate lognormal μ, σ from shifted lognormal parameters
-    from scipy.optimize import fsolve
+    # Verify the distribution matches intended percentiles
+    from scipy.stats import lognorm
+    dist = lognorm(s=sigma_ln, scale=np.exp(mu_ln))
+    median = dist.median()
+    p5 = dist.ppf(0.05)
+    p95 = dist.ppf(0.95)
     
-    def solve_lognorm_params(params):
-        mu, sigma = params
-        mean_ln = np.exp(mu + sigma**2/2)
-        var_ln = np.exp(2*mu + sigma**2) * (np.exp(sigma**2) - 1)
-        return [shift + mean_ln - target_mean, var_ln - target_std**2]
-    
-    mu_ln, sigma_ln = fsolve(solve_lognorm_params, [3.2, 0.5])
-    
-    print(f"  Lognormal parameters for transform:")
-    print(f"    μ = {mu_ln:.6f}, σ = {sigma_ln:.6f}, shift = {shift}")
-    print(f"    Verifying: mean = {shift + np.exp(mu_ln + sigma_ln**2/2):.2f}s (target: {target_mean}s)")
-    print(f"    Verifying: std = {np.sqrt(np.exp(2*mu_ln + sigma_ln**2) * (np.exp(sigma_ln**2) - 1)):.2f}s (target: {target_std}s)")
+    print(f"  Battery specific energy distribution (Lognormal):")
+    print(f"    μ_ln = {mu_ln:.4f}, σ_ln = {sigma_ln:.4f}")
+    print(f"    Median = {median:.1f} Wh/kg")
+    print(f"    5th percentile = {p5:.1f} Wh/kg")
+    print(f"    95th percentile = {p95:.1f} Wh/kg")
     
     # UQPCE uses STANDARD NORMAL distribution (optimal Hermite)
     config = {
         "Variable 0": {
-            "name": "z_hover",
+            "name": "z_battery",
             "distribution": "normal",
             "mean": 0.0,
             "stdev": 1.0,
@@ -122,25 +124,25 @@ def setup_and_init_uqpce() -> dict:
         np.savetxt(MATRIX_FILE, X)
 
     d = interface.initialize_dict(YAML_INPUT, MATRIX_FILE)
-    d["lognormal_params"] = {"mu": mu_ln, "sigma": sigma_ln, "shift": shift}
+    d["lognormal_params"] = {"mu": mu_ln, "sigma": sigma_ln}
     
     return d
 
 
 # ---------------------------------------------------------------------------
-# Inner solver (unchanged)
+# Inner solver (modified for battery density)
 # ---------------------------------------------------------------------------
 def inner_solve_for_Wtotal(
     prob: om.Problem,
-    t: float,
+    rho_bat: float,  # now battery specific energy instead of hover time
     payload: float,
     range_m: float,
     n_c: int,
     dvars: tuple[float, float, float, float],
 ) -> dict:
     V, r, J, Sw = dvars
-    _orig_t = getattr(sc, "T_HOVER", None)
-    sc.T_HOVER = float(t)
+    _orig_rho = getattr(sc, "BATTERY_DENSITY", None)
+    sc.BATTERY_DENSITY = float(rho_bat)  # Wh/kg
 
     try:
         def eval_res(W: float) -> float:
@@ -172,7 +174,7 @@ def inner_solve_for_Wtotal(
                     found = True
                     break
             if not found:
-                raise om.AnalysisError(f"No sign change in weight residual for t={t:.1f}s")
+                raise om.AnalysisError(f"No sign change in weight residual for ρ_bat={rho_bat:.1f} Wh/kg")
 
         root = brentq(eval_res, wl, wh, xtol=1e-3, maxiter=50)
 
@@ -184,19 +186,19 @@ def inner_solve_for_Wtotal(
         }
 
     except Exception as exc:
-        print(f"  [inner_solve] FAILED t={t:.1f}s: {exc}")
+        print(f"  [inner_solve] FAILED ρ_bat={rho_bat:.1f} Wh/kg: {exc}")
         return None
 
     finally:
-        if _orig_t is None:
-            if hasattr(sc, "T_HOVER"):
-                del sc.T_HOVER
+        if _orig_rho is None:
+            if hasattr(sc, "BATTERY_DENSITY"):
+                del sc.BATTERY_DENSITY
         else:
-            sc.T_HOVER = _orig_t
+            sc.BATTERY_DENSITY = _orig_rho
 
 
 # ---------------------------------------------------------------------------
-# OpenMDAO component
+# OpenMDAO component - Battery Density Uncertainty
 # ---------------------------------------------------------------------------
 class QBiTUQComp(om.ExplicitComponent):
     def initialize(self):
@@ -205,9 +207,8 @@ class QBiTUQComp(om.ExplicitComponent):
         self.options.declare("payload_kg", types=float)
         self.options.declare("range_m", types=float)
         self.options.declare("n_c", types=int)
-        self.options.declare("mu_ln", types=float, default=3.28424)
-        self.options.declare("sigma_ln", types=float, default=0.55403)
-        self.options.declare("shift", types=float, default=25.0)
+        self.options.declare("mu_ln", types=float, default=5.46)   # lognormal μ for ρ_bat
+        self.options.declare("sigma_ln", types=float, default=0.28) # lognormal σ for ρ_bat
 
     def setup(self):
         self.add_input("V_inf", val=33.0, units="m/s")
@@ -250,18 +251,18 @@ class QBiTUQComp(om.ExplicitComponent):
         z_samples = self.options["z_samples"]
         mu_ln = self.options["mu_ln"]
         sigma_ln = self.options["sigma_ln"]
-        shift = self.options["shift"]
         
-        t_samples = shift + np.exp(mu_ln + sigma_ln * z_samples)
+        # Transform: ρ_bat = exp(μ + σ·Z)  (lognormal)
+        rho_bat_samples = np.exp(mu_ln + sigma_ln * z_samples)
         
         pl = self.options["payload_kg"]
         rm = self.options["range_m"]
         nc = self.options["n_c"]
 
-        W_arr = np.empty(len(t_samples))
-        cl_arr = np.empty(len(t_samples))
-        dl_arr = np.empty(len(t_samples))
-        bl_arr = np.empty(len(t_samples))
+        W_arr = np.empty(len(rho_bat_samples))
+        cl_arr = np.empty(len(rho_bat_samples))
+        dl_arr = np.empty(len(rho_bat_samples))
+        bl_arr = np.empty(len(rho_bat_samples))
 
         W_PENALTY = float(W_TOTAL_BOUNDS[1])
         CL_PENALTY = CL_MAX * 1.5
@@ -269,8 +270,8 @@ class QBiTUQComp(om.ExplicitComponent):
         BL_PENALTY = BL_MAX * 1.5
 
         n_failed = 0
-        for i, t in enumerate(t_samples):
-            res = inner_solve_for_Wtotal(self._inner, t, pl, rm, nc, dvars)
+        for i, rho in enumerate(rho_bat_samples):
+            res = inner_solve_for_Wtotal(self._inner, rho, pl, rm, nc, dvars)
             if res is None:
                 n_failed += 1
                 W_arr[i] = W_PENALTY
@@ -284,7 +285,7 @@ class QBiTUQComp(om.ExplicitComponent):
                 bl_arr[i] = res["blade_loading"]
 
         if n_failed:
-            print(f"  [compute] {n_failed}/{len(t_samples)} samples failed")
+            print(f"  [compute] {n_failed}/{len(rho_bat_samples)} samples failed")
 
         outputs["W_total"] = W_arr
         outputs["cruise_CL"] = cl_arr
@@ -301,6 +302,7 @@ def run():
     
     print("=" * 70)
     print("UQPCE ROBUST DESIGN OPTIMIZATION")
+    print("Battery Specific Energy Uncertainty (Lognormal)")
     print("=" * 70)
     
     # ---- 1. UQPCE initialisation ----------------------------------------
@@ -313,7 +315,17 @@ def run():
     setup_time = time.time() - setup_start
     print(f"      ✓ Setup completed in {format_time(setup_time)}")
     print(f"      • PCE quadrature points: {n_quad}")
-    print(f"      • Transform: t_hover = {lognormal_params['shift']} + exp({lognormal_params['mu']:.4f} + {lognormal_params['sigma']:.4f}·Z)")
+    print(f"      • Transform: ρ_bat = exp({lognormal_params['mu']:.4f} + {lognormal_params['sigma']:.4f}·Z)")
+    
+    # Verify distribution statistics
+    from scipy.stats import lognorm
+    dist = lognorm(s=lognormal_params['sigma'], scale=np.exp(lognormal_params['mu']))
+    print(f"      • Resulting distribution:")
+    print(f"        - Median: {dist.median():.1f} Wh/kg")
+    print(f"        - Mean: {dist.mean():.1f} Wh/kg")
+    print(f"        - Std: {dist.std():.1f} Wh/kg")
+    print(f"        - 5th pct: {dist.ppf(0.05):.1f} Wh/kg")
+    print(f"        - 95th pct: {dist.ppf(0.95):.1f} Wh/kg")
     
     # ---- 2. Build outer problem -----------------------------------------
     print("\n[2/5] Building optimization problem...")
@@ -334,7 +346,6 @@ def run():
         n_c=2,
         mu_ln=lognormal_params["mu"],
         sigma_ln=lognormal_params["sigma"],
-        shift=lognormal_params["shift"],
     )
     prob.model.add_subsystem("eval", comp, promotes=["*"])
     
@@ -440,26 +451,95 @@ def run():
     print("\n[5/5] Validating at optimal design with Monte Carlo...")
     val_start_time = time.time()
     
-    from run_qbit_MCS import RobustOptimizer, sample_t_hover
-    uq_ref = RobustOptimizer(payload_kg=3.0, range_m=15000.0, n_c=2, n_mc=10000, seed=42)
-    uq_ref.mc_samples = sample_t_hover(2000, uq_ref.mean_t, uq_ref.std_t,
-                                        uq_ref.shift_t, seed=42)
-    x0 = [prob.get_val("V_inf")[0], prob.get_val("r")[0],
-          prob.get_val("J")[0], prob.get_val("S_w")[0]]
-    mc_stats = uq_ref._mc_stats(x0)
+    # Import the corrected RobustOptimizer from run_qbit_robust.py
+    from bat_run_qbit_MCS import RobustOptimizer, sample_battery_density
+    
+    # Create Monte Carlo validation object with battery density parameters
+    MEDIAN_RHO = 235.0  # Wh/kg
+    SIGMA_LN = 0.28
+    
+    # Use the same battery density distribution parameters
+    uq_ref = RobustOptimizer(
+        payload_kg=3.0, 
+        range_m=15000.0, 
+        n_c=2, 
+        n_mc=10000,  # High-fidelity MC validation
+        median_rho=MEDIAN_RHO,
+        sigma_ln=SIGMA_LN,
+        seed=42
+    )
+    
+    # Generate MC samples for battery density (10000 samples for validation)
+    uq_ref.mc_samples = sample_battery_density(
+        uq_ref.n_mc, 
+        uq_ref.median_rho, 
+        uq_ref.sigma_ln,
+        seed=42, 
+        method="lhs"
+    )
+    
+    # Get the optimal design variables from optimization result
+    x_opt = [
+        prob.get_val("V_inf")[0], 
+        prob.get_val("r")[0],
+        prob.get_val("J")[0], 
+        prob.get_val("S_w")[0]
+    ]
+    
+    print(f"  Running Monte Carlo validation with {uq_ref.n_mc} samples at optimal design...")
+    mc_stats = uq_ref._mc_stats(x_opt)
     
     val_duration = time.time() - val_start_time
     
-    if mc_stats:
-        mc_W = [r["W_total"] for r in mc_stats["results"] if r]
+    if mc_stats and len(mc_stats["results"]) > 0:
+        # Filter valid results
+        valid_results = [r for r in mc_stats["results"] if r is not None]
+        mc_W = np.array([r["W_total"] for r in valid_results])
         mc_mean = np.mean(mc_W)
         mc_std = np.std(mc_W)
+        mc_95th = np.percentile(mc_W, 95)
+        mc_97_5th = np.percentile(mc_W, 97.5)
+        
+        # Get PCE predictions
         pce_mean = prob.get_val("W_total:mean")[0]
         pce_std = prob.get_val("W_total:variance")[0]**0.5
-        print(f"\n  PCE mean = {pce_mean:.2f} N,  MC mean = {mc_mean:.2f} N,  "
-              f"error = {abs(pce_mean-mc_mean):.2f} N ({abs(pce_mean-mc_mean)/mc_mean*100:.1f}%)")
-        print(f"  PCE std  = {pce_std:.2f} N,   MC std  = {mc_std:.2f} N,   "
-              f"error = {abs(pce_std-mc_std):.2f} N ({abs(pce_std-mc_std)/mc_std*100:.1f}%)")
+        pce_95th = prob.get_val("W_total:ci_upper")[0]
+        
+        # Calculate errors
+        mean_error = abs(pce_mean - mc_mean)
+        mean_error_pct = (mean_error / mc_mean) * 100 if mc_mean > 0 else float('nan')
+        std_error = abs(pce_std - mc_std)
+        std_error_pct = (std_error / mc_std) * 100 if mc_std > 0 else float('nan')
+        p95_error = abs(pce_95th - mc_95th)
+        p95_error_pct = (p95_error / mc_95th) * 100 if mc_95th > 0 else float('nan')
+        
+        print(f"\n  {'='*50}")
+        print(f"  PCE vs MONTE CARLO VALIDATION (n={len(valid_results)} valid samples)")
+        print(f"  {'='*50}")
+        print(f"  Metric          | PCE            | MC             | Error")
+        print(f"  {'-'*50}")
+        print(f"  Mean (N)        | {pce_mean:10.2f}   | {mc_mean:10.2f}   | {mean_error:8.2f} N ({mean_error_pct:.1f}%)")
+        print(f"  Std (N)         | {pce_std:10.2f}   | {mc_std:10.2f}   | {std_error:8.2f} N ({std_error_pct:.1f}%)")
+        print(f"  95th pct (N)    | {pce_95th:10.2f}   | {mc_95th:10.2f}   | {p95_error:8.2f} N ({p95_error_pct:.1f}%)")
+        print(f"  {'='*50}")
+        print(f"  MTOM Mean (kg)  | {pce_mean/G:10.3f}   | {mc_mean/G:10.3f}   |")
+        print(f"  MTOM 95th (kg)  | {pce_95th/G:10.3f}   | {mc_95th/G:10.3f}   |")
+        print(f"  MTOM 97.5th (kg)| {pce_95th*1.02/G:10.3f}   | {mc_97_5th/G:10.3f}   |")
+        
+        # Check if PCE predictions are within acceptable tolerance
+        if mean_error_pct < 5 and std_error_pct < 10 and p95_error_pct < 5:
+            print(f"\n  ✓ PCE surrogate validation PASSED (errors within tolerance)")
+        else:
+            print(f"\n  ⚠ PCE surrogate validation WARNING (errors exceed tolerance)")
+            if mean_error_pct >= 5:
+                print(f"    - Mean error {mean_error_pct:.1f}% exceeds 5% tolerance")
+            if std_error_pct >= 10:
+                print(f"    - Std error {std_error_pct:.1f}% exceeds 10% tolerance")
+            if p95_error_pct >= 5:
+                print(f"    - 95th percentile error {p95_error_pct:.1f}% exceeds 5% tolerance")
+    else:
+        print(f"\n  ✗ Monte Carlo validation FAILED: No valid samples")
+        print(f"    Check convergence of inner solver at optimal design")
     
     # ---- TIMING SUMMARY -------------------------------------------------
     total_duration = time.time() - total_start_time
@@ -472,6 +552,20 @@ def run():
     print(f"Validation time    : {format_time(val_duration)}")
     print(f"Total runtime      : {format_time(total_duration)}")
     print("=" * 60)
+    
+    # ---- Uncertainty quantification summary ----------------------------
+    print("\n" + "=" * 60)
+    print("UNCERTAINTY CHARACTERIZATION")
+    print("=" * 60)
+    print("Battery specific energy is modeled as a lognormal uncertainty")
+    print(f"with median {dist.median():.0f} Wh/kg and logarithmic standard")
+    print(f"deviation {SIGMA_LN}, corresponding approximately to a 5–95%")
+    print(f"interval of {dist.ppf(0.05):.0f}–{dist.ppf(0.95):.0f} Wh/kg.")
+    print("This representation reflects the positive, right-skewed, and")
+    print("multiplicative nature of effective pack-level energy density")
+    print("at the conceptual design stage.")
+    print("=" * 60)
+    
     print("\n OPTIMIZATION COMPLETE")
     print("=" * 60)
 

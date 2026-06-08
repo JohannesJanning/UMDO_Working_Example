@@ -19,7 +19,11 @@ try:
 except FileNotFoundError:
     print("No saved samples found. Using design point to generate samples...")
     
-    x_det = [29.33, 0.2698, 1.3, 0.2435]
+    x_det = [29.33, 0.2698, 1.3, 0.2435] # conservative 
+    x_det = [31.36, 0.2227, 1.3, 0.1895] # nominal
+    x_det = [28.98, 0.2622, 1.3, 0.2245] # MRDO 
+    
+
     
     from run_qbit_MCS import RobustOptimizer, inner_solve_for_Wtotal, sample_t_hover
     

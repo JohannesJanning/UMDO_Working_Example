@@ -1,15 +1,15 @@
 """
-run_qbit_robust.py - Robust sizing optimization for QBiT with uncertain hover time.
+run_qbit_robust.py - Robust sizing optimization for QBiT with uncertain battery specific energy.
 
 Minimize U = 0.5 * mean(W_total) + 0.5 * std(W_total) where the uncertainty in
-`T_HOVER` is propagated via Monte Carlo sampling. For each Monte Carlo sample
+`BATTERY_DENSITY` is propagated via Monte Carlo sampling. For each Monte Carlo sample
 an inner OpenMDAO solve finds the required `W_total` (weight closure) for the
 given design variables.
 
 Notes:
 - This implements a nested (outer) optimizer over design variables
   [V_inf, r, J, S_w] and (inner) solves that compute `W_total` for sampled
-  `T_HOVER` values. The implementation is intentionally simple and
+  `BATTERY_DENSITY` values. The implementation is intentionally simple and
   sequential; Monte Carlo and inner solves are expensive.
 """
 from __future__ import annotations
@@ -80,25 +80,36 @@ class SizingResult:
         return "\n".join(lines)
 
 
-def get_shifted_lognormal_dist(target_mean: float, target_std: float, shift: float):
-    mu_prime = target_mean - shift
-    v_prime = target_std**2
-    s_sq = math.log(v_prime / mu_prime**2 + 1)
-    s = math.sqrt(s_sq)
-    scale = mu_prime / math.sqrt(v_prime / mu_prime**2 + 1)
-    return lognorm(s, loc=shift, scale=scale)
+def get_lognormal_dist(median: float = 235.0, sigma_ln: float = 0.28):
+    """
+    Create a lognormal distribution for battery specific energy.
+    
+    Parameters:
+    - median: median value in Wh/kg (default: 235 Wh/kg)
+    - sigma_ln: logarithmic standard deviation (default: 0.28)
+    
+    Returns:
+    - lognorm distribution object with scale = median
+    """
+    # For lognormal: scale = median
+    return lognorm(s=sigma_ln, scale=median)
 
 
-def sample_t_hover(n_samples: int, mean: float = 55.0, std: float = 18.0,
-                   shift: float = 25.0, seed: int | None = None,
-                   method: str = "lhs") -> np.ndarray:
-    """Generate samples for T_HOVER using the chosen sampling method.
-
+def sample_battery_density(n_samples: int, median: float = 235.0, sigma_ln: float = 0.28,
+                           seed: int | None = None, method: str = "lhs") -> np.ndarray:
+    """
+    Generate samples for BATTERY_DENSITY using the chosen sampling method.
+    
+    Battery specific energy follows a lognormal distribution with:
+    - median = 235 Wh/kg
+    - 5th percentile ≈ 150 Wh/kg
+    - 95th percentile ≈ 370 Wh/kg
+    
     method: 'lhs' for Latin Hypercube Sampling (recommended) or 'mcs'
             for plain Monte Carlo sampling.
-    Returns an array of shape (n_samples,) in the physical units of t_hover.
+    Returns an array of shape (n_samples,) in Wh/kg.
     """
-    dist = get_shifted_lognormal_dist(mean, std, shift)
+    dist = get_lognormal_dist(median, sigma_ln)
     if method.lower() in ("lhs", "latin", "latin_hypercube", "latin-hypercube"):
         # Latin Hypercube in unit [0,1], then map via distribution PPF
         sampler = qmc.LatinHypercube(d=1, seed=seed)
@@ -111,15 +122,16 @@ def sample_t_hover(n_samples: int, mean: float = 55.0, std: float = 18.0,
         return dist.rvs(size=n_samples, random_state=rng)
 
 
-def inner_solve_for_Wtotal(t_hover_sample: float, payload_kg: float, range_m: float, n_c: int,
+def inner_solve_for_Wtotal(rho_bat_sample: float, payload_kg: float, range_m: float, n_c: int,
                            design_vars: Sequence[float], w_initial: float = 6.0 * G) -> float:
-    """For a single sampled `t_hover`, build the OpenMDAO problem with that
-    hover time and the given fixed design variables and solve only for
-    `W_total` (the inner weight-closure solve). Returns found W_total (N) or
-    np.nan on failure.
+    """For a single sampled `rho_bat` (battery specific energy in Wh/kg), 
+    build the OpenMDAO problem with that battery density and the given fixed 
+    design variables and solve only for `W_total` (the inner weight-closure solve). 
+    Returns found W_total (N) or np.nan on failure.
+    
     design_vars: [V_inf, r, J, S_w]
     """
-    # solve weight_residual(W_total) == 0 by root-finding on W_total.
+    # We'll solve weight_residual(W_total) == 0 by root-finding on W_total.
     # Cache Problems per design point to avoid repeated setup overhead.
     V_inf, r, J, S_w = design_vars
 
@@ -131,7 +143,7 @@ def inner_solve_for_Wtotal(t_hover_sample: float, payload_kg: float, range_m: fl
     if prob is None:
         prob = om.Problem(reports=None)
         prob.model = build_qbit_model(payload_kg, range_m, n_c)
-        # Register W_total as a model input/output 
+        # Register W_total as a model input/output (we will set it directly)
         prob.model.add_output = getattr(prob.model, 'add_output', None)
         # Set fixed design variable defaults
         prob.model.set_input_defaults('V_inf', val=float(V_inf), units='m/s')
@@ -145,9 +157,9 @@ def inner_solve_for_Wtotal(t_hover_sample: float, payload_kg: float, range_m: fl
 
     # Define residual evaluator
     def eval_res(W: float) -> float:
-        # set hover time and W_total, run model (not driver)
-        orig_T = getattr(sc, 'T_HOVER', None)
-        sc.T_HOVER = float(t_hover_sample)
+        # set battery density and W_total, run model (not driver)
+        orig_rho = getattr(sc, 'BATTERY_DENSITY', None)
+        sc.BATTERY_DENSITY = float(rho_bat_sample)
         try:
             prob.set_val('W_total', float(W))
             prob.set_val('V_inf', float(V_inf))
@@ -161,10 +173,10 @@ def inner_solve_for_Wtotal(t_hover_sample: float, payload_kg: float, range_m: fl
         except Exception:
             return float('nan')
         finally:
-            if orig_T is None:
-                delattr(sc, 'T_HOVER')
+            if orig_rho is None:
+                delattr(sc, 'BATTERY_DENSITY')
             else:
-                sc.T_HOVER = orig_T
+                sc.BATTERY_DENSITY = orig_rho
 
     
     wl, wh = float(W_TOTAL_BOUNDS[0]), float(W_TOTAL_BOUNDS[1])
@@ -193,8 +205,8 @@ def inner_solve_for_Wtotal(t_hover_sample: float, payload_kg: float, range_m: fl
         # root find
         W_root = brentq(eval_res, wl, wh, xtol=1e-3, rtol=1e-4, maxiter=100)
         # extract full model outputs at root
-        orig_T = getattr(sc, 'T_HOVER', None)
-        sc.T_HOVER = float(t_hover_sample)
+        orig_rho = getattr(sc, 'BATTERY_DENSITY', None)
+        sc.BATTERY_DENSITY = float(rho_bat_sample)
         try:
             prob.set_val('W_total', float(W_root))
             prob.run_model()
@@ -216,15 +228,15 @@ def inner_solve_for_Wtotal(t_hover_sample: float, payload_kg: float, range_m: fl
             }
             return out
         finally:
-            if orig_T is None:
-                delattr(sc, 'T_HOVER')
+            if orig_rho is None:
+                delattr(sc, 'BATTERY_DENSITY')
             else:
-                sc.T_HOVER = orig_T
+                sc.BATTERY_DENSITY = orig_rho
     except Exception:
         # fallback: try running the original inner optimizer as a last resort
         try:
-            orig_T = getattr(sc, 'T_HOVER', None)
-            sc.T_HOVER = float(t_hover_sample)
+            orig_rho = getattr(sc, 'BATTERY_DENSITY', None)
+            sc.BATTERY_DENSITY = float(rho_bat_sample)
             prob.driver = om.ScipyOptimizeDriver()
             prob.driver.options['optimizer'] = 'SLSQP'
             prob.driver.options['tol'] = 1e-6
@@ -257,9 +269,8 @@ class RobustOptimizer:
     range_m: float
     n_c: int = 1
     n_mc: int = 50
-    mean_t: float = 55.0
-    std_t: float = 18.0
-    shift_t: float = 25.0
+    median_rho: float = 235.0      # median battery specific energy (Wh/kg)
+    sigma_ln: float = 0.28         # logarithmic standard deviation
     seed: int | None = 123
     mc_samples: np.ndarray | None = None
     sampling_method: str = "lhs"
@@ -314,7 +325,6 @@ class RobustOptimizer:
         p97_5_W = meanW + 2 * stdW
 
         # Objective: minimize the estimated 97.5th-percentile W (in N)
-        #U = float(meanW)
         U = float(p97_5_W)
 
         line = (f"{bar} [{self._obj_calls}/{self.maxiter}] ETA {eta_str} "
@@ -332,8 +342,8 @@ class RobustOptimizer:
         """
         V_inf, r, J, S_w = x
         if self.mc_samples is None:
-            samples = sample_t_hover(self.n_mc, self.mean_t, self.std_t, self.shift_t,
-                                     seed=self.seed, method=self.sampling_method)
+            samples = sample_battery_density(self.n_mc, self.median_rho, self.sigma_ln,
+                                             seed=self.seed, method=self.sampling_method)
         else:
             samples = self.mc_samples
         results = []
@@ -345,18 +355,18 @@ class RobustOptimizer:
             try:
                 workers = int(self.n_jobs)
                 # wrapper to keep signature picklable for joblib
-                def _call_inner(t_val):
-                    return inner_solve_for_Wtotal(t_val, self.payload_kg, self.range_m, self.n_c,
+                def _call_inner(rho_val):
+                    return inner_solve_for_Wtotal(rho_val, self.payload_kg, self.range_m, self.n_c,
                                                   design_vars=(V_inf, r, J, S_w))
 
-                res_list = Parallel(n_jobs=workers, prefer='processes')(delayed(_call_inner)(t) for t in samples)
+                res_list = Parallel(n_jobs=workers, prefer='processes')(delayed(_call_inner)(rho) for rho in samples)
             except Exception:
                 # fallback to sequential if parallelization fails
-                res_list = [inner_solve_for_Wtotal(t, self.payload_kg, self.range_m, self.n_c,
-                                                   design_vars=(V_inf, r, J, S_w)) for t in samples]
+                res_list = [inner_solve_for_Wtotal(rho, self.payload_kg, self.range_m, self.n_c,
+                                                   design_vars=(V_inf, r, J, S_w)) for rho in samples]
         else:
-            res_list = [inner_solve_for_Wtotal(t, self.payload_kg, self.range_m, self.n_c,
-                                               design_vars=(V_inf, r, J, S_w)) for t in samples]
+            res_list = [inner_solve_for_Wtotal(rho, self.payload_kg, self.range_m, self.n_c,
+                                               design_vars=(V_inf, r, J, S_w)) for rho in samples]
 
         t_inner1 = time.time()
         # update counters
@@ -395,8 +405,6 @@ class RobustOptimizer:
         for k in keys:
             vals = np.array([p[k] for p in results if isinstance(p, dict)])
             if vals.size > 0:
-                # We store the mean, but you might also want to track the 'robust' constraint value
-                # e.g., mean_res[k + '_p95'] = np.mean(vals) + 1.645 * np.std(vals)
                 mean_res[k] = float(np.mean(vals))
             else:
                 mean_res[k] = float('nan')
@@ -417,11 +425,10 @@ class RobustOptimizer:
         if x0 is None:
             x0 = [np.mean(b) for b in bounds]
         # Pre-generate common MC samples (CRN) for all objective evaluations
-        self.mc_samples = sample_t_hover(self.n_mc, self.mean_t, self.std_t, self.shift_t,
-                         seed=self.seed, method=self.sampling_method)
+        self.mc_samples = sample_battery_density(self.n_mc, self.median_rho, self.sigma_ln,
+                                                 seed=self.seed, method=self.sampling_method)
         print("Starting robust optimization (using common random numbers).")
-        # Build constraints enforcing mean metrics across MC samples
-        
+        print(f"Battery specific energy uncertainty: Lognormal(median={self.median_rho} Wh/kg, σ_ln={self.sigma_ln})")
         
         def constr_cruise_CL(x):
             stats = self._mc_stats(x)
@@ -429,20 +436,6 @@ class RobustOptimizer:
                 return -1e6
             return float(CL_MAX - stats['mean_res']['cruise_CL'])
         
-        #def constr_cruise_CL(x):
-        #    stats = self._mc_stats(x)
-        #    if stats is None:
-        #        return -1e6
-        #    # Reliability-based (chance) constraint: enforce that the
-        #    # upper confidence bound of cruise CL stays below CL_MAX.
-        #    cl_samples = np.array([p['cruise_CL'] for p in stats['results'] if isinstance(p, dict)])
-        #    if cl_samples.size == 0:
-        #        return -1e6
-        #    mean_cl = float(stats['mean_res']['cruise_CL'])
-        #    std_cl = float(np.std(cl_samples, ddof=0))
-        #    # use multiplier 2.43 for 100 MCS runs (approx 97.5%) as in reliable optimizer
-        #    return float(CL_MAX - (mean_cl + 2.43 * std_cl) - self.cl_margin)
-
         def constr_disk_loading(x):
             stats = self._mc_stats(x)
             if stats is None:
@@ -461,7 +454,7 @@ class RobustOptimizer:
             {'type': 'ineq', 'fun': constr_blade_loading},
         ]
 
-        # SLSQP with bounds and constraints to enforce limits during optimization
+        # Use SLSQP with bounds and constraints to enforce limits during optimization
         t_start = time.time()
         # reset diagnostics
         self._obj_calls = 0
@@ -497,7 +490,14 @@ class RobustOptimizer:
 
 
 if __name__ == '__main__':
-    opt = RobustOptimizer(payload_kg=3.0, range_m=15_000.0, n_c=2, n_mc=100, seed=123)
+    # Battery specific energy uncertainty parameters
+    # Lognormal with median 235 Wh/kg, σ_ln = 0.28
+    # Corresponds to 5th percentile ~150 Wh/kg, 95th ~370 Wh/kg
+    MEDIAN_RHO = 235.0
+    SIGMA_LN = 0.28
+    
+    opt = RobustOptimizer(payload_kg=3.0, range_m=15_000.0, n_c=2, n_mc=100, 
+                         median_rho=MEDIAN_RHO, sigma_ln=SIGMA_LN, seed=123)
     x0 = [28.70, 0.2678, 1.3, 0.2296]
     res = opt.run(x0=x0, method='SLSQP')
     print('\nOptimization finished:')
@@ -506,14 +506,24 @@ if __name__ == '__main__':
     # Post-process: evaluate optimized design with larger MC and print styled summary
     x_opt = res.x
     opt_large = RobustOptimizer(payload_kg=opt.payload_kg, range_m=opt.range_m, n_c=opt.n_c,
-                                n_mc=2000, mean_t=opt.mean_t, std_t=opt.std_t, shift_t=opt.shift_t, seed=opt.seed,
-                                sampling_method=opt.sampling_method)
-    samples = opt_large.mc_samples = sample_t_hover(opt_large.n_mc, opt_large.mean_t, opt_large.std_t, opt_large.shift_t,
-                                                    seed=opt_large.seed, method=opt_large.sampling_method)
+                                n_mc=2000, median_rho=opt.median_rho, sigma_ln=opt.sigma_ln, 
+                                seed=opt.seed, sampling_method=opt.sampling_method)
+    samples = opt_large.mc_samples = sample_battery_density(opt_large.n_mc, opt_large.median_rho, 
+                                                            opt_large.sigma_ln, seed=opt_large.seed, 
+                                                            method=opt_large.sampling_method)
     per_results = []
-    for t in samples:
-        r = inner_solve_for_Wtotal(t, opt_large.payload_kg, opt_large.range_m, opt_large.n_c, design_vars=tuple(x_opt))
+    for rho in samples:
+        r = inner_solve_for_Wtotal(rho, opt_large.payload_kg, opt_large.range_m, opt_large.n_c, 
+                                   design_vars=tuple(x_opt))
         per_results.append(r if isinstance(r, dict) else None)
+
+    # Print battery density statistics for context
+    print(f"\n--- Battery Specific Energy Distribution ---")
+    print(f"Lognormal(median={MEDIAN_RHO} Wh/kg, σ_ln={SIGMA_LN})")
+    print(f"  5th percentile: {np.percentile(samples, 5):.1f} Wh/kg")
+    print(f"  95th percentile: {np.percentile(samples, 95):.1f} Wh/kg")
+    print(f"  Mean: {np.mean(samples):.1f} Wh/kg")
+    print(f"  Std: {np.std(samples):.1f} Wh/kg")
 
     # filter valid results
     valid = [p for p in per_results if isinstance(p, dict)]
@@ -539,7 +549,8 @@ if __name__ == '__main__':
             P_hover=mean_res_dict['P_hover'], P_cruise=mean_res_dict['P_cruise'],
             V_inf=mean_res_dict['V_inf'], r=mean_res_dict['r'], J=mean_res_dict['J'], S_w=mean_res_dict['S_w'],
             b=b, chord=chord, E_req=mean_res_dict['E_req'], converged=True,
-            disk_loading=mean_res_dict['disk_loading'], blade_loading=mean_res_dict['blade_loading'], cruise_CL=mean_res_dict['cruise_CL'], weight_residual=mean_res_dict['weight_residual'],
+            disk_loading=mean_res_dict['disk_loading'], blade_loading=mean_res_dict['blade_loading'], 
+            cruise_CL=mean_res_dict['cruise_CL'], weight_residual=mean_res_dict['weight_residual'],
             DL_MAX=DL_MAX, BL_MAX=BL_MAX, CL_MAX=CL_MAX
         )
         print(mean_result.summary())
@@ -557,6 +568,7 @@ if __name__ == '__main__':
             plt.axvline(p_hi, color='r', ls=':', label=f'97.5% {p_hi:.3f} kg')
             plt.xlabel('MTOM (kg)')
             plt.ylabel('Density')
+            plt.title(f'Robust Design MTOM Distribution\nBattery Density Uncertainty: Lognormal(median={MEDIAN_RHO} Wh/kg, σ={SIGMA_LN})')
             plt.grid(alpha=0.3)
             plt.legend()
             plt.tight_layout()

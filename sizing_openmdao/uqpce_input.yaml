@@ -6,6 +6,6 @@ Settings:
 Variable 0:
   distribution: normal
   mean: 0.0
-  name: z_hover
+  name: z_battery
   stdev: 1.0
   type: aleatory
