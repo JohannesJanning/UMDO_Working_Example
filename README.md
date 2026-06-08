@@ -1,4 +1,4 @@
-# UMDO Lab: UAV Design under Uncertainty Working Example
+# UMDO Lab: UAV Design Working Example
 
 > **Status:** Under Construction
 
