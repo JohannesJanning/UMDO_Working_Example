@@ -1,16 +1,5 @@
 """
 run_qbit_robust.py - Robust sizing optimization for QBiT with uncertain hover time.
-
-Minimize U = 0.5 * mean(W_total) + 0.5 * std(W_total) where the uncertainty in
-`T_HOVER` is propagated via Monte Carlo sampling. For each Monte Carlo sample
-an inner OpenMDAO solve finds the required `W_total` (weight closure) for the
-given design variables.
-
-Notes:
-- This implements a nested (outer) optimizer over design variables
-  [V_inf, r, J, S_w] and (inner) solves that compute `W_total` for sampled
-  `T_HOVER` values. The implementation is intentionally simple and
-  sequential; Monte Carlo and inner solves are expensive.
 """
 from __future__ import annotations
 import math
