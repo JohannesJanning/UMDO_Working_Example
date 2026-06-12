@@ -1,20 +1,6 @@
 """
-AerodynamicTrimComp - Eqs. (13)-(15), (17)-(18) of Kaneko & Martins (2023).
-
-Computes the cruise trim state for the QBiT:
-  - Lift trim: L = W  →  CL, CDi
-  - Drag:  D_total = D_body + D_wing
-  - Rotor thrust: T_cruise = D_total / N_rotor
-  - Dimensionless rotor params: CT, μ  (Eq. 14)
-  - Inflow ratio λ (Eq. 13) - solved via internal Newton loop
-  - Induced velocity Vi (Eq. 12)
-  - Profile power P0 (Eq. 15)
-
-β = 85° is FIXED for the QBiT (paper Sec. III.B.3: "AoA of 5 deg assumed").
-No outer iteration on β is required.
-
-Partials: complex-step (method='cs') because of the internal Newton loop
-for λ and the nonlinear drag expressions.
+AerodynamicTrimComp 
+- aerodynamic trim calculator 
 """
 import numpy as np
 import openmdao.api as om
@@ -23,10 +9,9 @@ from qbit.constants import (RHO_AIR, N_ROTOR, AR_FIXED, E_OSWALD,
 
 
 def _solve_lambda(mu, CT, beta, tol=1e-12, maxiter=200):
-    """Newton solve for inflow ratio λ (Eq. 13), complex-step compatible.
-
-    Equation:  λ = μ·tan(β) + CT / (2·√(μ²+λ²))
-    Residual:  f(λ) = λ - μ·tan(β) - CT/(2·√(μ²+λ²)) = 0
+    """
+    Newton solve for inflow ratio 
+    - solving an implicit equation for the rotor inflow ratio (lambda).
     """
     lam = CT / (2.0 * np.sqrt(mu ** 2 + (CT / 2.0) ** 2))   # initial guess
     for _ in range(maxiter):
@@ -62,7 +47,7 @@ class AerodynamicTrimComp(om.ExplicitComponent):
         self.add_output('P0',       val=15.0, units='W',   desc='Profile power per rotor')
 
     def setup_partials(self):
-        self.declare_partials('*', '*', method='cs')
+        self.declare_partials('*', '*', method='cs') # use complex-step
 
     def compute(self, inputs, outputs):
         W   = inputs['W_total'][0]

@@ -1,15 +1,6 @@
 """
-WeightResidualComp - Eq. (2) of Kaneko & Martins (2023).
-
-Explicit weight closure residual:
-  weight_residual = W_total - W_payload - W_battery - W_empty
-
-Registered as an EQUALITY CONSTRAINT (= 0) in the optimizer.
-This is numerically equivalent to the Newton inner loop used in the paper:
-the optimizer enforces weight closure at every converged solution.
-
-Using an equality constraint rather than an ImplicitComponent + Newton avoids
-complex-step / Newton incompatibility when SLSQP computes total derivatives.
+WeightResidualComp 
+- weight closure component
 """
 import openmdao.api as om
 

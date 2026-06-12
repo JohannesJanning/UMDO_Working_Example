@@ -1,11 +1,11 @@
 Settings:
   aleat_samp_size: 100000
   backend: Agg
-  order: 6
+  order: 7
   track_convergence_off: true
 Variable 0:
   distribution: normal
   mean: 0.0
-  name: z_battery
+  name: z_hover
   stdev: 1.0
   type: aleatory

@@ -1,16 +1,5 @@
 """
-CruisePowerComp - Eq. (11) of Kaneko & Martins (2023).
-
-P_cruise = N · (T·V·sinβ + κ·T·Vᵢ + P₀)
-
-κ (Eq. 12):  κ = min{ 1.15 ;  1/η - [√(2ρA) / T^1.5] · P₀ }
-  NOTE: P₀ in the κ formula is the PROFILE power (Eq. 15),
-        not the hover ideal power. P₀ must be computed in
-        AerodynamicTrimComp before this component runs.
-
-Ω = π·V∞/(r·J)  so r is needed here only for the κ formula (A = π·r²).
-
-Partials: complex-step because of the conditional min() in κ.
+CruisePowerComp 
 """
 import numpy as np
 import openmdao.api as om

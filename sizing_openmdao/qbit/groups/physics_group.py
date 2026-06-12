@@ -1,19 +1,10 @@
 """
 PhysicsGroup - all sizing physics components in one OpenMDAO Group.
+- Imports each individual physics component (each is a separate file with its own calculation logic)
+- Creates a new OpenMDAO Group that will contain all physics components (class)
+- Defines what components belong to this group (setup())
+- Adds one physics component to the assembly line (promotes=['*'] to share variables across components)
 
-Architecture:
-  - All ExplicitComponents use analytic or cs partials as appropriate.
-  - WeightBalanceComp is an ImplicitComponent; its residual is driven to
-    zero by the EQUALITY CONSTRAINT registered on 'weight_residual' in the
-    parent Problem. This matches the approach used in the scipy reference
-    model and avoids Newton/cs incompatibility issues.
-  - No group-level Newton solver is used here. The optimizer (SLSQP) directly
-    satisfies the weight balance through the equality constraint, which is
-    the same mathematical formulation as Eq. (2).
-
-This is numerically equivalent to the paper's architecture: the weight
-closure loop (Eq. 2) is enforced at optimality, just driven by SLSQP's
-constraint machinery rather than a separate inner Newton loop.
 """
 import openmdao.api as om
 

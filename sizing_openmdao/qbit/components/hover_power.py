@@ -1,15 +1,11 @@
 """
-HoverPowerComp - Eq. (10) of Kaneko & Martins (2023).
-
-P_hover_per_rotor = (1/η) · T^1.5 / sqrt(2·ρ·A)
-P_hover_total     = N_rotor · P_hover_per_rotor
-where T = W_total / N_rotor  (hover trim condition)
+HoverPowerComp 
 """
 import numpy as np
 import openmdao.api as om
-from qbit.constants import RHO_AIR, ETA_HOVER, N_ROTOR, G
+from qbit.constants import RHO_AIR, N_ROTOR
 from qbit import constants as _c
-from qbit.constants import RHO_AIR, N_ROTOR, G
+from qbit.constants import RHO_AIR, N_ROTOR 
 
 class HoverPowerComp(om.ExplicitComponent):
     """

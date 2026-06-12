@@ -1,14 +1,6 @@
 """
 QBiTModel - top-level OpenMDAO Group for the QBiT sizing problem.
-
-Hierarchy:
-  QBiTModel
-    ivc          IndepVarComp  - mission parameters + design variable IVs
-    physics      PhysicsGroup  - all sizing physics + weight closure solver
-    constraints  ConstraintsGroup - constraint output computations
-
-All internal connections are made via promoted names ('*').
-The parent Problem registers design vars, constraints, and objective.
+- Defines the overall model structure and data flow
 """
 import openmdao.api as om
 
@@ -20,7 +12,7 @@ def build_qbit_model(payload_kg: float,
                      range_m:    float,
                      n_c:        int = 1) -> om.Group:
     """
-    Return a fully configured QBiT model Group.
+    Return a configured QBiT model Group.
 
     Parameters
     ----------
@@ -40,8 +32,7 @@ def build_qbit_model(payload_kg: float,
                    desc='Number of delivery customers (fixed)')
 
     # Design variable initial guesses (W_total is NOT here — it is the
-    # implicit state of WeightBalanceComp; adding it here would create two
-    # outputs for the same promoted name; singular Jacobian)
+    # implicit state of WeightBalanceComp)
     ivc.add_output('V_inf', val=33.0,       units='m/s')
     ivc.add_output('r',     val=0.22,       units='m')
     ivc.add_output('J',     val=1.3,        desc='Propeller advance ratio')

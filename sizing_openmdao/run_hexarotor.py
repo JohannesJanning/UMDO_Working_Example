@@ -1,17 +1,5 @@
 """
-run_hexarotor.py - Hexarotor Stage-1 sizing optimization driver.
-
-Minimise W_total subject to:
-  - weight_residual = 0         Eq. (2), weight closure
-  - disk_loading   <= 250 N/m²  Table 1
-  - blade_loading  <= 0.14      Table 1
-  (No CL constraint — QBiT only per Table 1)
-
-Design variables: W_total, V_inf, r, mu  [Table 1 bounds]
-  (No J, no S_w — hexarotor has no wing and uses μ not J)
-
-Usage:
-    python run_hexarotor.py
+run_hexarotor.py - Hexarotor sizing optimization driver.
 """
 from __future__ import annotations
 import warnings

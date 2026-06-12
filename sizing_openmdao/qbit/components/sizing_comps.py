@@ -1,12 +1,7 @@
 """
 Weight and power sizing components for the QBiT model.
-
-InstalledPowerComp  - P_inst = 1.5 x P_hover  (hover dominates for QBiT)
-EmptyWeightComp     - Eqs. (3)-(8): structural + propulsion empty weight
-MissionEnergyComp   - Eq. (9): total mission energy (no climb segment)
-BatteryWeightComp   - W_battery from E_req
 """
-import numpy as np
+
 import openmdao.api as om
 from qbit.constants import (
     G, N_ROTOR, BETA_QBIT, T_HOVER,
@@ -35,7 +30,6 @@ class InstalledPowerComp(om.ExplicitComponent):
 
     def setup_partials(self):
         self.declare_partials('P_inst', 'P_hover',  val=1.5)
-        self.declare_partials('P_inst', 'P_cruise', val=0.0)
 
     def compute(self, inputs, outputs):
         outputs['P_inst'] = 1.5 * inputs['P_hover']
@@ -45,11 +39,7 @@ class InstalledPowerComp(om.ExplicitComponent):
 
 class EmptyWeightComp(om.ExplicitComponent):
     """
-    W_empty = W_motor + W_ESC + W_rotor + W_wing + W_frame
-
-    Regression coefficients (Eqs. 4–7) give kg; multiply by g for Newtons.
-    Rotor regression (Eq. 6) is per-rotor → multiply by N_ROTOR.
-    Frame constant 0.5 in Eq. (8) is in kg → multiply by g.
+    W_empty = W_motor + W_ESC + W_rotor + W_wing + W_frame 
 
     Inputs:  P_inst [W], r [m], S_w [m²], W_total [N]
     Output:  W_empty [N]
@@ -92,12 +82,6 @@ class EmptyWeightComp(om.ExplicitComponent):
 
 class MissionEnergyComp(om.ExplicitComponent):
     """
-    Eq. (9) without climb segment (Stage 0 simplification):
-      E_req = P_hover · (2·(n_c+1)·t_hover) + P_cruise · (R / V∞)
-
-    n_c is a fixed integer mission parameter, not a design variable.
-    It is passed as a float input but rounded to int internally.
-
     Inputs:  P_hover [W], P_cruise [W], V_inf [m/s], R [m], n_c [–]
     Output:  E_req [J]
     """
@@ -142,8 +126,6 @@ class MissionEnergyComp(om.ExplicitComponent):
 
 class BatteryWeightComp(om.ExplicitComponent):
     """
-    W_battery = (E_req / 3600) / (η_bat · ρ_b) · g
-
     Inputs:  E_req [J]
     Output:  W_battery [N]
     """

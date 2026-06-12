@@ -1,17 +1,10 @@
 """
-ConstraintsGroup - explicit constraint output computations.
-
-Each constraint is its own ExecComp so the optimizer can request
-gradients individually. All outputs are promoted to '*'.
-
-Constraints (Table 1, Kaneko & Martins 2023):
-  disk_loading  = (W_total / N_rotor) / (π·r²)  ≤ 250 N/m²
-  blade_loading = CT / σ                          ≤ 0.14
-  cruise_CL     = W_total / (½·ρ·V²·S_w)        ≤ 0.6
+ConstraintsGroup 
+- constraint calculation module
 """
 import openmdao.api as om
 from qbit.constants import N_ROTOR, SIGMA, RHO_AIR
-import numpy as np
+
 
 
 class ConstraintsGroup(om.Group):
