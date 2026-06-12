@@ -4,14 +4,11 @@ Based on: Kaneko & Martins (2023) "Fleet Design Optimization of Package Delivery
           Unmanned Aerial Vehicles Considering Operations", J. Aircraft, 60(4).
 
 Physics and regression constants are taken directly from the paper (Sec. III).
-
-Stage 0 - model initialization
-Stage 1 - single UAV, single route (1 node), minimum MTOM objective
 """
 
 import numpy as np
 from scipy.optimize import fsolve, minimize
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Optional
 import warnings
 
