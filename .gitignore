@@ -19,4 +19,5 @@ Thumbs.db
 env/
 venv/
 
-archive/archive/
+archive/
+
