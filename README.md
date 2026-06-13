@@ -4,7 +4,7 @@
 
 This repository provides a working example for uncertainty-based multidisciplinary design optimization (UMDO) applied to the conceptual sizing of a quadrotor biplane tailsitter (QBiT) unmanned aerial vehicle.
 
-The deterministic sizing model is based on the QBiT formulation presented by Govindarajan et al. (2020) and Kaneko & Martins (2023). The model was reimplemented in OpenMDAO and extended with uncertainty propagation and robust design optimization under uncertain hover-time requirements.
+The deterministic sizing model is based on the QBiT formulation presented by Govindarajan et al. (2020)[^1] and Kaneko & Martins (2023)[^2]. The model was reimplemented in OpenMDAO and extended with uncertainty propagation and robust design optimization under uncertain hover-time requirements using Monte Carlo Simulation and Polynomial Chaos Expansion via UQPCE[^3].
 
 ## Context
 
@@ -72,15 +72,15 @@ The workflow relies on a small scientific Python stack:
 
 **Design context based on**:
 
-Kaneko, S., Martins, J.R.R.A., 2023. *Fleet Design Optimization of Package Delivery Unmanned Aerial Vehicles Considering Operations*. Journal of Aircraft 60, 1061–1077. https://doi.org/10.2514/1.C036921
+[^2]Kaneko, S., Martins, J.R.R.A., 2023. *Fleet Design Optimization of Package Delivery Unmanned Aerial Vehicles Considering Operations*. Journal of Aircraft 60, 1061–1077. https://doi.org/10.2514/1.C036921
 
 **Sizing models based on**:
 
-Govindarajan, B., Sridharan, A., 2020. *Conceptual Sizing of Vertical Lift Package Delivery Platforms*. Journal of Aircraft 57, 1170–1188. https://doi.org/10.2514/1.C035805
+[^1]Govindarajan, B., Sridharan, A., 2020. *Conceptual Sizing of Vertical Lift Package Delivery Platforms*. Journal of Aircraft 57, 1170–1188. https://doi.org/10.2514/1.C035805
 
 **PCE uncertainty propagation based on**:
 
-Ben D. Phillips, Joanna Schmidt, Robert D. Falck, Eliot D. Aretskin-Hariton (2025). *End-to-End Uncertainty Quantification with Analytical Derivatives for Design Under Uncertainty*. Journal of Aircraft, Volume 62, Number6. https://doi.org/10.2514/6.2024-4219
+[^3]Ben D. Phillips, Joanna Schmidt, Robert D. Falck, Eliot D. Aretskin-Hariton (2025). *End-to-End Uncertainty Quantification with Analytical Derivatives for Design Under Uncertainty*. Journal of Aircraft, Volume 62, Number6. https://doi.org/10.2514/6.2024-4219
 
 ## Disclaimer
 
