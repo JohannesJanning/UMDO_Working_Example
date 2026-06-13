@@ -70,17 +70,17 @@ The workflow relies on a small scientific Python stack:
 
 ## References
 
-**Design context based on**:
-
-[^2]Kaneko, S., Martins, J.R.R.A., 2023. *Fleet Design Optimization of Package Delivery Unmanned Aerial Vehicles Considering Operations*. Journal of Aircraft 60, 1061–1077. https://doi.org/10.2514/1.C036921
-
 **Sizing models based on**:
 
-[^1]Govindarajan, B., Sridharan, A., 2020. *Conceptual Sizing of Vertical Lift Package Delivery Platforms*. Journal of Aircraft 57, 1170–1188. https://doi.org/10.2514/1.C035805
+[^1]: Govindarajan, B., Sridharan, A., 2020. *Conceptual Sizing of Vertical Lift Package Delivery Platforms*. Journal of Aircraft 57, 1170–1188. https://doi.org/10.2514/1.C035805
+
+**Design context and sizing models based on**:
+
+[^2]: Kaneko, S., Martins, J.R.R.A., 2023. *Fleet Design Optimization of Package Delivery Unmanned Aerial Vehicles Considering Operations*. Journal of Aircraft 60, 1061–1077. https://doi.org/10.2514/1.C036921
 
 **PCE uncertainty propagation based on**:
 
-[^3]Ben D. Phillips, Joanna Schmidt, Robert D. Falck, Eliot D. Aretskin-Hariton (2025). *End-to-End Uncertainty Quantification with Analytical Derivatives for Design Under Uncertainty*. Journal of Aircraft, Volume 62, Number6. https://doi.org/10.2514/6.2024-4219
+[^3]: Ben D. Phillips, Joanna Schmidt, Robert D. Falck, Eliot D. Aretskin-Hariton (2025). *End-to-End Uncertainty Quantification with Analytical Derivatives for Design Under Uncertainty*. Journal of Aircraft, Volume 62, Number6. https://doi.org/10.2514/6.2024-4219
 
 ## Disclaimer
 
