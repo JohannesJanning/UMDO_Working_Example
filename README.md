@@ -2,9 +2,28 @@
 
 > **Status:** Under Construction
 
-This repository contains the preliminary code for a working example on Uncertainty-Based Multidisciplinary Design Optimization (UMDO) applied to the conceptual sizing of a Quadrotor Biplane Tailsitter (QBiT) UAV.
+This repository provides a working example for uncertainty-based multidisciplinary design optimization (UMDO) applied to the conceptual sizing of a quadrotor biplane tailsitter (QBiT) unmanned aerial vehicle.
 
 The deterministic sizing model is based on the QBiT formulation presented by Govindarajan et al. (2020) and Kaneko & Martins (2023). The model was reimplemented in OpenMDAO and extended with uncertainty propagation and robust design optimization under uncertain hover-time requirements.
+
+## Context
+
+The sizing formulation follows published conceptual UAV sizing methods for package-delivery missions and extends them with stochastic modeling. Two vehicle architectures are represented in the code base:
+
+- QBiT, a transition-capable tailsitter configuration
+- Hexarotor, used here as a multirotor comparison baseline
+
+The uncertainty studies focus on how variability in hover requirements and related performance parameters affects key sizing quantities such as takeoff mass. 
+
+## What The Repository Explores
+
+At a high level, the code supports three related activities:
+
+1. Deterministic sizing of the UAV mission design point.
+2. Uncertainty propagation using Monte Carlo simulation and polynomial chaos methods.
+3. Robust sizing and comparison between design architectures across mission ranges and payload masses.
+
+The example mission is a logistics delivery scenario with multiple customer stops, a fixed total mission range, and a payload representative of small package transport.
 
 ## Working Example
 
@@ -30,28 +49,24 @@ Subject to:
 
 ## Repository Structure
 
-```text
-run_qbit_MCS.py
-```
+The main implementation lives in the `sizing_openmdao` directory and is organized around model components, group definitions, and analysis scripts.
 
-Monte Carlo-based robust sizing optimization using uncertainty propagation through repeated model evaluations.
+- `qbit/` contains the QBiT sizing model.
+- `hexarotor/` contains the comparison multirotor model.
+- `run_qbit.py` and related scripts execute the deterministic baseline and uncertainty-aware studies.
+- `run_qbit_monte_carlo.py`, `run_qbit_UQ_static.py`, and `run_qbit_UQPCE.py` provide stochastic and robust-design workflows.
 
-```text
-run_qbit_UQPCE.py
-```
-
-Polynomial-chaos-based robust sizing optimization using NASA's UQPCE framework.
 
 ## Dependencies
 
-```text
-numpy
-scipy
-openmdao
-matplotlib
-pyyaml
-uqpce
-```
+The workflow relies on a small scientific Python stack:
+
+- `numpy`
+- `scipy`
+- `openmdao`
+- `matplotlib`
+- `pyyaml`
+- `uqpce`
 
 ## References
 
